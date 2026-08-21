@@ -560,6 +560,16 @@ fn main() {
                 ..Default::default()
             };
 
+            // macOS keeps an app alive after its last window closes, which for a single-window
+            // tool reads as "it didn't quit" — the user closes it and has to right-click the
+            // Dock icon to actually exit. There is nothing to come back to here, so quit.
+            cx.on_window_closed(|cx| {
+                if cx.windows().is_empty() {
+                    cx.quit();
+                }
+            })
+            .detach();
+
             cx.open_window(options, |window, cx| {
                 let view: Entity<SplitterApp> = cx.new(|cx| SplitterApp::new(window, cx));
                 // Root is required as the first-level view: it enables dialogs and notifications.

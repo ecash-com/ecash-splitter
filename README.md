@@ -36,6 +36,16 @@ cargo run -p ecash-splitter
 
 Connect device → search for accounts → pick one → enter a destination → build → review → sign.
 
+For the real thing — app icon, proper name in the Dock — build a macOS `.app` bundle:
+
+```sh
+./contrib/bundle-macos.sh            # or: ./contrib/bundle-macos.sh release
+open "target/debug/eCash Splitter.app"
+```
+
+`cargo run` launches a bare binary, which has nowhere to carry an icon or a name; macOS reads
+both from a bundle's `Info.plist`. This is also the bundle the signing work operates on.
+
 ## Run the CLI
 
 ```sh
@@ -107,8 +117,8 @@ consensus facts, and the decisions already settled.
 and Linux PNG set, plus `generate.py` to rebuild them. macOS gets a rounded, padded variant
 because it does not auto-mask app icons — see [`assets/README.md`](assets/README.md).
 
-Not wired up yet: there is no `.app` bundle or installer, so nothing displays these. That lands
-with packaging (see [`docs/signing-and-notarization.md`](docs/signing-and-notarization.md)).
+`./contrib/bundle-macos.sh` builds a macOS `.app` that uses them. Windows and Linux packaging is
+still unstarted — see [`docs/signing-and-notarization.md`](docs/signing-and-notarization.md).
 
 ## Licence
 

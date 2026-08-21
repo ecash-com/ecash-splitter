@@ -268,7 +268,9 @@ in QR mode — six devices, no vendor libraries.
 | **Linux** | ❌ Never built or run. Needs udev rules per vendor for HID and serial access |
 | **Windows** | ❌ Never built or run. Needs WinUSB/HID driver verification per device |
 
-Packaging, code signing, and notarization are all unstarted — see
+A macOS `.app` bundle is buildable (`contrib/bundle-macos.sh`), which is what carries the icon
+and is what signing operates on. Windows and Linux packaging, code signing, and notarization are
+unstarted — see
 [`signing-and-notarization.md`](signing-and-notarization.md) for what each platform requires.
 Two findings worth knowing early: macOS appears to need **no USB entitlement** (Liana ships
 notarized with hardened runtime and nothing else), and Windows now requires **HSM-backed keys**
