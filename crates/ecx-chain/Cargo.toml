@@ -9,5 +9,10 @@ description = "ECX chain sources, the fork probe, and the sync gate."
 [dependencies]
 ecx-core.workspace = true
 bitcoin.workspace = true
+esplora-client.workspace = true
 async-trait.workspace = true
 thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

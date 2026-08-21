@@ -12,8 +12,12 @@ license = "MIT"
 [workspace.dependencies]
 bitcoin = "0.32"
 bdk_wallet = "3.1.0"
-bdk_esplora = { version = "0.22.2", features = ["async-https", "tokio"] }
-async-hwi = "0.0.32"
+bdk_esplora = { version = "0.22.2", default-features = false, features = ["async-https-rustls", "tokio"] }
+esplora-client = { version = "0.12.3", default-features = false, features = ["async-https-rustls", "tokio"] }
+futures = "0.3"
+# default features include `service`, which pulls reqwest into the signer crate. We want no
+# network here at all (CLAUDE.md Golden Rule 8), so enable only the transports we use.
+async-hwi = { version = "0.0.32", default-features = false, features = ["ledger"] }
 trezor-client = { version = "0.1.6", features = ["bitcoin"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 async-trait = "0.1"

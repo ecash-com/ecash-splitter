@@ -4,7 +4,13 @@
 //! and dropped; do not add it back without reading §6 first.
 
 use bitcoin::{BlockHash, Transaction, Txid};
+
+pub mod esplora;
+pub mod profile;
+
 use ecx_core::ECASH_HEIGHT;
+pub use esplora::EsploraChain;
+pub use profile::{ChainProfile, ProfileKind};
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ChainError {
@@ -29,10 +35,24 @@ pub enum ChainError {
 #[async_trait::async_trait]
 pub trait ChainSource: Send + Sync {
     async fn tip_height(&self) -> Result<u32, ChainError>;
+    /// Height **and timestamp** of the newest block the indexer knows about. The timestamp is
+    /// what makes the sync gate work before the fork — see [`ScanReadiness::assess`].
+    async fn tip(&self) -> Result<TipInfo, ChainError>;
     async fn block_hash_at(&self, height: u32) -> Result<Option<BlockHash>, ChainError>;
     async fn raw_tx(&self, txid: Txid) -> Result<Option<Transaction>, ChainError>;
-    async fn broadcast(&self, tx: &Transaction) -> Result<Txid, ChainError>;
+    /// Broadcast. Requires a [`BroadcastPermit`], which only a [`ForkProbe::ConfirmedEcx`] can
+    /// mint — so broadcasting to a Bitcoin endpoint is a compile error, not a runtime check.
+    async fn broadcast(
+        &self,
+        tx: &Transaction,
+        permit: &BroadcastPermit,
+    ) -> Result<Txid, ChainError>;
 }
+
+/// Proof that the endpoint was verified as ECX. Unforgeable outside this module: the only
+/// constructor is [`ForkProbe::permit`], and the inner field is private.
+#[derive(Debug)]
+pub struct BroadcastPermit(());
 
 // ---------------------------------------------------------------------------
 // Golden Rule 4 — the fork probe
@@ -62,6 +82,11 @@ impl ForkProbe {
     /// Golden Rule 4: broadcast only to a chain we proved is ECX.
     pub fn may_broadcast(&self) -> bool {
         matches!(self, ForkProbe::ConfirmedEcx { .. })
+    }
+
+    /// Mint a [`BroadcastPermit`]. `None` for every state except a confirmed ECX endpoint.
+    pub fn permit(&self) -> Option<BroadcastPermit> {
+        matches!(self, ForkProbe::ConfirmedEcx { .. }).then_some(BroadcastPermit(()))
     }
 
     pub fn as_error(&self) -> Option<ChainError> {
@@ -106,54 +131,129 @@ pub async fn probe_fork(
 // Golden Rule 9 — the sync gate
 // ---------------------------------------------------------------------------
 
+/// Height and timestamp of an indexer's newest block.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TipInfo {
+    pub height: u32,
+    /// Unix seconds, from the block header.
+    pub time: u32,
+}
+
+/// How stale an indexer's tip may be before we stop trusting an empty result. Bitcoin averages a
+/// block every ten minutes, so three hours is roughly eighteen blocks of slack.
+pub const MAX_TIP_AGE_SECS: u64 = 3 * 60 * 60;
+
 /// Whether a scan result may be shown to the user at all.
 ///
-/// A partially-synced indexer is indistinguishable from an empty wallet, and "you have no coins"
-/// is the one wrong answer a user acts on immediately and irreversibly.
+/// A lagging indexer is indistinguishable from an empty wallet, and "you have no coins" is the
+/// one wrong answer a user acts on immediately and irreversibly (Golden Rule 9).
+///
+/// **The question is "has this indexer caught up?", not "is it past the fork height".** Those are
+/// different, and conflating them is wrong: before the fork block exists, an indexer sitting on
+/// the current chain tip is perfectly synced and its empty results are trustworthy, even though
+/// it is below [`ecx_core::ECASH_HEIGHT`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScanReadiness {
-    /// Tip is at or past the fork height. Results may be shown.
-    Ready,
-    /// Show progress, state no balance.
-    Syncing { tip: u32, target: u32 },
+    /// Caught up. Results, including empty ones, can be trusted.
+    Ready { tip: u32 },
+    /// Behind. Show progress, state no balance.
+    Behind { tip: u32, age_secs: u64 },
 }
 
 impl ScanReadiness {
-    pub fn at_tip(tip: u32) -> Self {
-        if tip >= ECASH_HEIGHT {
-            ScanReadiness::Ready
+    /// `now_unix` is threaded in rather than read from the clock so this stays testable.
+    ///
+    /// Known limitation: an indexer stalled *above* the fork height still reads as ready. Post-
+    /// fork difficulty resets to minimum, so ECX block intervals will be erratic and a pure
+    /// freshness test would produce constant false alarms. Revisit once real block times exist.
+    pub fn assess(tip: TipInfo, now_unix: u64) -> Self {
+        if tip.height >= ecx_core::ECASH_HEIGHT {
+            return ScanReadiness::Ready { tip: tip.height };
+        }
+        let age = now_unix.saturating_sub(tip.time as u64);
+        if age <= MAX_TIP_AGE_SECS {
+            ScanReadiness::Ready { tip: tip.height }
         } else {
-            ScanReadiness::Syncing {
-                tip,
-                target: ECASH_HEIGHT,
+            ScanReadiness::Behind {
+                tip: tip.height,
+                age_secs: age,
             }
         }
     }
 
     pub fn may_report_balance(&self) -> bool {
-        matches!(self, ScanReadiness::Ready)
+        matches!(self, ScanReadiness::Ready { .. })
     }
+
+    pub fn tip(&self) -> u32 {
+        match self {
+            ScanReadiness::Ready { tip } | ScanReadiness::Behind { tip, .. } => *tip,
+        }
+    }
+}
+
+/// Current unix time, for [`ScanReadiness::assess`].
+pub fn now_unix() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn sync_gate_blocks_below_the_fork_height() {
-        // explorer.alpha.ecash.ninja was here on 2026-08-21.
-        let syncing = ScanReadiness::at_tip(458_330);
-        assert!(!syncing.may_report_balance());
-        assert_eq!(
-            syncing,
-            ScanReadiness::Syncing {
-                tip: 458_330,
-                target: ECASH_HEIGHT
-            }
-        );
+    const NOW: u64 = 1_787_000_000;
 
-        assert!(!ScanReadiness::at_tip(ECASH_HEIGHT - 1).may_report_balance());
-        assert!(ScanReadiness::at_tip(ECASH_HEIGHT).may_report_balance());
+    #[test]
+    fn a_mid_sync_indexer_is_not_trusted() {
+        // explorer.alpha.ecash.ninja was here earlier on 2026-08-21, replaying old blocks.
+        let stale = TipInfo {
+            height: 458_330,
+            time: (NOW - 5 * 365 * 24 * 3600) as u32,
+        };
+        let readiness = ScanReadiness::assess(stale, NOW);
+        assert!(!readiness.may_report_balance());
+        assert!(matches!(
+            readiness,
+            ScanReadiness::Behind { tip: 458_330, .. }
+        ));
+    }
+
+    #[test]
+    fn a_caught_up_pre_fork_indexer_is_trusted() {
+        // The same host later the same day: below ECASH_HEIGHT only because the fork block does
+        // not exist yet, but sitting on the real chain tip. Empty results here are trustworthy.
+        let fresh = TipInfo {
+            height: 963_466,
+            time: (NOW - 600) as u32,
+        };
+        assert!(ScanReadiness::assess(fresh, NOW).may_report_balance());
+    }
+
+    #[test]
+    fn past_the_fork_height_is_always_ready() {
+        let old = TipInfo {
+            height: ECASH_HEIGHT,
+            time: 1,
+        };
+        assert!(ScanReadiness::assess(old, NOW).may_report_balance());
+    }
+
+    #[test]
+    fn only_a_confirmed_ecx_probe_mints_a_permit() {
+        let hash = BlockHash::from_raw_hash(bitcoin::hashes::Hash::all_zeros());
+        assert!(ForkProbe::ConfirmedEcx { hash }.permit().is_some());
+        assert!(ForkProbe::IsBitcoin.permit().is_none());
+        assert!(ForkProbe::NotSyncedToFork { tip: 1 }.permit().is_none());
+        assert!(
+            ForkProbe::ChainsNotYetDiverged {
+                bitcoin_tip: 963_465
+            }
+            .permit()
+            .is_none()
+        );
     }
 
     #[test]

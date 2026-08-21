@@ -6,11 +6,12 @@
 //! Backends: `async-hwi` (Ledger, BitBox02, Coldcard, Jade, Specter), `trezor-client`
 //! (Trezor Model T / Safe 3 / Safe 5), and air-gapped PSBT over file or QR.
 
-use bitcoin::{
-    Address,
-    bip32::{DerivationPath, Fingerprint, Xpub},
-};
+use bitcoin::bip32::{DerivationPath, Fingerprint, Xpub};
 use ecx_core::EcxPsbt;
+
+pub mod ledger;
+
+pub use ledger::LedgerSigner;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeviceKind {
@@ -79,7 +80,10 @@ pub trait Signer: Send + Sync {
     async fn master_fingerprint(&self) -> Result<Fingerprint, SignerError>;
     async fn extended_pubkey(&self, path: &DerivationPath) -> Result<Xpub, SignerError>;
     /// Show an address on the device screen, for verifying a device-derived destination (§7.5).
-    async fn display_address(&self, path: &DerivationPath) -> Result<Address, SignerError>;
+    ///
+    /// Ledger needs a registered wallet policy for anything but BIP86 taproot, so this is
+    /// unimplemented for single-sig segwit until `register_wallet` lands (§12).
+    async fn display_address(&self, path: &DerivationPath) -> Result<(), SignerError>;
     async fn sign(&self, psbt: &mut EcxPsbt) -> Result<(), SignerError>;
 }
 
@@ -96,5 +100,6 @@ pub struct DeviceInfo {
 /// (`Ledger::enumerate(&HidApi)`, …) and `trezor-client` has its own. This is where we write the
 /// fan-out (`CLAUDE.md` §5.5).
 pub async fn enumerate() -> Result<Vec<DeviceInfo>, SignerError> {
-    todo!("fan out across async-hwi modules and trezor-client::find_devices()")
+    // Only Ledger so far. BitBox02, Coldcard, Jade, Specter and Trezor join here.
+    ledger::enumerate()
 }

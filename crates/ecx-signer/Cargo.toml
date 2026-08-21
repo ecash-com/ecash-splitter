@@ -9,5 +9,7 @@ description = "Hardware wallet abstraction: async-hwi, trezor-client, and air-ga
 [dependencies]
 ecx-core.workspace = true
 bitcoin.workspace = true
+async-hwi.workspace = true
 async-trait.workspace = true
 thiserror.workspace = true
+tracing.workspace = true
