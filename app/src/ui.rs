@@ -1423,6 +1423,7 @@ fn signed_card(
                         .child(field(cx, "nLockTime", summary.locktime.to_string()))
                         .child(field(cx, "txid", txid.to_string())),
                 )
+                .child(explorer_link(profile, txid, cx))
                 .child(
                     div()
                         .flex()
@@ -1581,5 +1582,57 @@ fn depth_controls(app: &SplitterApp, cx: &mut Context<SplitterApp>) -> AnyElemen
                 }))
                 .into_any_element(),
         ))
+        .into_any_element()
+}
+
+/// Link to the transaction on the chain's explorer.
+///
+/// Deliberately says the link will not resolve yet. The transaction is signed but **not
+/// broadcast**, so the explorer has never seen it — offering a bare link would send the user to a
+/// "not found" page and leave them wondering which half of the app was lying.
+fn explorer_link(profile: &ChainProfile, txid: &str, cx: &mut Context<SplitterApp>) -> AnyElement {
+    let url = profile.tx_url(txid);
+    let for_click = url.clone();
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .p_3()
+        .rounded_lg()
+        .border_1()
+        .border_color(cx.theme().border)
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap_3()
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("View on the explorer"),
+                )
+                .child(
+                    Button::new("explorer")
+                        .outline()
+                        .xsmall()
+                        .label("Open")
+                        .on_click(move |_, _window, cx| cx.open_url(&for_click)),
+                ),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(cx.theme().link)
+                .child(SharedString::from(url)),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child("Nothing will be there yet — this transaction has not been broadcast."),
+        )
         .into_any_element()
 }

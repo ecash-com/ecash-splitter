@@ -71,6 +71,29 @@ cargo run -p ecash-splitter-cli -- discover
 cargo run -p ecash-splitter-cli -- sign --to bc1q...
 ```
 
+## Changing endpoints between fork phases
+
+These hosts move every phase — drynet → alpha → beta → mainnet — so they are changeable three
+ways, in increasing order of permanence:
+
+```sh
+# 1. at runtime: the GUI has an endpoint field; the CLI takes --endpoint
+cargo run -p ecash-splitter-cli -- status --endpoint https://explorer.beta.ecash.ninja
+
+# 2. by environment, no rebuild and no UI fiddling
+ECX_ESPLORA_URL=https://explorer.beta.ecash.ninja/api cargo run -p ecash-splitter
+```
+
+3. **In code** — `PRESETS` in `crates/ecx-chain/src/profile.rs` is the only place a hostname is
+   written.
+
+`/api` is appended if omitted and trailing slashes are trimmed, so either form works. The
+explorer link is derived from the API base by removing `/api`; override it separately with
+`ECX_EXPLORER_URL` if they ever differ.
+
+Changing a URL never loosens safety: every endpoint is still gated by the fork probe before
+anything is broadcast.
+
 ## Supported devices
 
 Ledger (verified on hardware), Coldcard, Specter, Jade, and Trezor Model T / Safe 3 / Safe 5.

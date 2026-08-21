@@ -126,7 +126,8 @@ support is done. That was the expensive half; the transport work is done too, as
 | | State |
 |---|---|
 | **Esplora** | ✅ Default and only backend. Tip, block hash at height, raw transactions, broadcast |
-| **Custom endpoint** | ✅ Editable in the GUI header and via `--endpoint` in the CLI. URLs are normalized (trailing slash trimmed, `/api` appended) |
+| **Custom endpoint** | ✅ Three ways: the GUI header field, `--endpoint`, or `ECX_ESPLORA_URL` / `ECX_EXPLORER_URL` in the environment. URLs are normalized (trailing slash trimmed, `/api` appended). `PRESETS` in `profile.rs` is the only place a hostname is written in code |
+| **Explorer links** | ✅ Derived from the API base by stripping `/api`; shown after signing in both frontends, annotated because an unbroadcast transaction will not be there |
 | **Electrum** | ❌ `bdk_electrum` is not wired up. `ChainSource` is a trait, so it is a constructor change plus an impl |
 | **Compact-filter SPV** | ⛔ Dropped, see §6. Needs peers serving `getcfilters`, which Core has off by default |
 

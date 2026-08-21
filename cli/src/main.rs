@@ -454,6 +454,12 @@ async fn run(command: &str, args: &[String]) -> Result<(), String> {
             println!("{}", bitcoin::consensus::encode::serialize_hex(&tx));
             println!();
             println!(
+                "explorer    : {}",
+                profile.tx_url(&tx.compute_txid().to_string())
+            );
+            println!("              (nothing there yet — this has not been broadcast)");
+            println!();
+            println!(
                 "NOT broadcast. eCash has not activated at block {}, so no endpoint can pass the \n\
                  fork probe. Keep this hex if you want to broadcast it yourself later.",
                 ecx_core::ECASH_HEIGHT
