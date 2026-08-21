@@ -1,6 +1,6 @@
 # Support status
 
-What works today, what does not, and what each missing piece needs. Written 2026-08-21; check
+What works today, what does not, and what each missing piece needs. Written 2026-08-21, updated after adding Trezor; check
 `git log` before trusting it. Section references are to [`CLAUDE.md`](../CLAUDE.md).
 
 Key: ✅ works · 🟡 implemented, untested on hardware · ⛔ deliberately excluded · ❌ not built
@@ -13,9 +13,10 @@ Key: ✅ works · 🟡 implemented, untested on hardware · ⛔ deliberately exc
 |---|---|
 | **Frontends** | Desktop (GPUI) ✅ · CLI (`ecx`) ✅ — both share `ecx-split`, neither owns the flow |
 | **Flow** | Connect → discover → select → destination → build PSBT → review ✅ · signing and broadcast ❌ |
-| **Devices** | Ledger ✅ · Coldcard 🟡 · Specter 🟡 · Jade 🟡 · BitBox02 ❌ · Trezor ❌ |
+| **Devices** | Ledger ✅ · Coldcard 🟡 · Specter 🟡 · Jade 🟡 · Trezor 🟡 · BitBox02 ❌ |
 | **Chain** | Esplora ✅ · Electrum ❌ · compact-filter SPV ⛔ |
 | **Tests** | 37, all passing. 19 of them are the `ecx-core` invariant suite |
+| **Frontend parity** | Both frontends stop at review; neither can sign |
 
 The app **stops before signing on purpose**: eCash activates at block 963,648 and until then the
 chains are identical, no endpoint can pass the fork probe, and a signed transaction would have
@@ -33,8 +34,9 @@ nowhere valid to go.
 | **Coldcard** | USB HID | `async-hwi` | 🟡 Implemented, never run against hardware |
 | **Specter DIY** | Serial | `async-hwi` | 🟡 Implemented, never run against hardware |
 | **Jade** | Serial | `async-hwi` | 🟡 Implemented, never run against hardware. Unlock relays to Blockstream's blind PIN oracle — see below |
+| **Trezor** Model T / Safe 3 / Safe 5 | USB | `trezor-client` | 🟡 Implemented, never run against hardware. Runs on a dedicated thread — see below |
 
-`sign()` is wired for all four but **never called**, because the flow stops at review. It is
+`sign()` is wired for all five but **never called**, because the flow stops at review. It is
 untested on every device including Ledger.
 
 **Jade and the blind oracle.** Unlocking a Jade makes an HTTPS request to Blockstream's PIN
@@ -48,12 +50,33 @@ user who unlocked in the Blockstream app never triggers a request.
 
 | Device | Why | What it needs | Rough effort |
 |---|---|---|---|
-| **Trezor** Model T / Safe 3 / Safe 5 | `trezor-client` is **blocking** over `rusb`, and every call is a recursive `TxRequest` ack loop rather than a one-shot | A dedicated thread with a channel pair, plus an adapter onto our async `Signer` trait. **No Blockbook — see below.** | ~half a day |
 | **BitBox02** | Connecting is a pairing handshake, not a `connect()` | `PairingBitbox02::connect` → display `pairing_code()` → user confirms on device → `wait_confirm()`. A new UI step in both frontends | ~1–2 hours |
 | **Trezor Model One** | ⛔ Deliberate. It cannot take a PIN or passphrase on-device, so supporting it would put both in this app's memory, against Golden Rule 1. No SD card or camera either, so no air-gap fallback | Nothing — holders are directed to `../ecash-electrum` | n/a |
 | **Air-gapped** (SeedSigner, Passport, Krux, Keystone, Coldcard Q, Jade via QR) | Not built | See below | ~1 hour (file) / days (QR) |
 
-Trezor has the largest install base after Ledger, so it is the highest-value next device.
+### Trezor specifics
+
+Two structural differences from the `async-hwi` devices, both handled:
+
+- **Blocking transport.** `trezor-client` is synchronous over `rusb` and its handle is not usable
+  from an async context, so it lives on a dedicated thread reached over channels. The thread is
+  created on connect and exits when the last handle drops.
+- **It returns a transaction, not a PSBT.** Every other device fills signatures into the PSBT.
+  Trezor emits a *raw signature* rather than a scriptSig, and `trezor-client` deliberately dropped
+  its `apply_signature` helper because putting one back into a PSBT needs pubkey and script
+  inspection. So it streams the finished transaction in fragments, which we concatenate and
+  deserialize. `Signer::sign` returns a `SignedTx` enum modelling both shapes rather than
+  pretending they are the same; both converge at `verify_signed`.
+
+Interaction requests are answered by policy, not convenience:
+
+| Request | Response | Why |
+|---|---|---|
+| `ButtonRequest` | acknowledge | The user presses a button on the device |
+| `PassphraseRequest` | `ack(on_device = true)` | The passphrase is typed on the Trezor and never enters this process (Golden Rule 1) |
+| `PinMatrixRequest` | **refused** | Only Model One asks for host-side PIN entry, and Model One is unsupported |
+
+Model One is filtered out at enumeration — it reports as `Model::TrezorLegacy`.
 
 ### Does Trezor need a Blockbook instance?
 
@@ -71,7 +94,7 @@ them from our own Esplora indexer and put them in the PSBT as `non_witness_utxo`
 **We already do this.** `build.rs` never calls `only_witness_utxo()`, `finalize_ecx_psbt` *rejects*
 a PSBT whose non-taproot inputs lack a previous transaction (§8.5), and the review screen reports
 the check on every build — it came back green on a real Ledger PSBT. So the data half of Trezor
-support is done. What remains is purely transport plumbing.
+support is done. That was the expensive half; the transport work is done too, as of this update.
 
 ---
 
@@ -157,11 +180,13 @@ unstarted. See §11 — the signing burden is the real cost, not the code.
 
 ## Suggested order
 
-1. **Trezor** — largest remaining install base, and the data half is already done
+1. **Sign → verify → broadcast** — `verify_signed` has nineteen tests and no callers, which is
+   the biggest gap between what is tested and what runs. Wiring it means resolving `SignedTx`:
+   finalize-and-extract for PSBT devices, take-as-is for Trezor. Blocked on the fork for the
+   broadcast half, but the rest can be built and tested now
 2. **Air-gap by file** — cheapest broad win, and it is the same export the QR path will need
-3. **Sign → verify → broadcast** — blocked on the fork anyway, but `verify_signed` sitting
-   uncalled is the biggest gap between what is tested and what runs
-4. **BitBox02** — small, self-contained
-5. **`display_address`** via Ledger wallet policies — makes device-derived destinations
+3. **BitBox02** — small, self-contained; the last USB device
+4. **`display_address`** via Ledger wallet policies — makes device-derived destinations
    verifiable, at which point the §7.5 default should be revisited
-6. **Linux and Windows** — required before anyone but us can run this
+5. **Linux and Windows** — required before anyone but us can run this
+6. **Air-gap by QR** — the big one, and the only thing that reaches SeedSigner and Keystone

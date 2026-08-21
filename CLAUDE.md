@@ -338,7 +338,11 @@ All on `bitcoin 0.32`:
 - **`trezor-client 0.1.6`** with `features = ["bitcoin"]` — first-party, maintained inside
   `trezor-firmware`. `Trezor::sign_tx(&psbt, Network::Bitcoin)` takes a `bitcoin::psbt::Psbt`
   directly and reads `lock_time` straight off `psbt.unsigned_tx`. **Blocking**, over `rusb`.
-  **Model T / Safe 3 / Safe 5 only — Model One is unsupported** (§5.5).
+  **Model T / Safe 3 / Safe 5 only — Model One is unsupported** (§5.5). Note it returns a
+  fully serialized transaction rather than an updated PSBT: it emits a raw signature, not a
+  scriptSig, and `trezor-client` dropped its `apply_signature` helper because reinserting one
+  needs pubkey and script inspection. `Signer::sign` returns a `SignedTx` enum covering both
+  shapes; they converge at `verify_signed`.
 - **`ledger_bitcoin_client 0.6.2`** directly, only if `async-hwi` proves too coarse.
 - **Air-gapped PSBT** — `.psbt` file on SD card, and animated QR. Covers Coldcard, SeedSigner,
   Krux, Passport, Jade, and anything future. **Ship this in v1 as a first-class path, not a

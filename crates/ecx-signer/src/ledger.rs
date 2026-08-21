@@ -10,7 +10,7 @@ use async_hwi::{
 use bitcoin::bip32::{DerivationPath, Fingerprint, Xpub};
 use ecx_core::EcxPsbt;
 
-use crate::{DeviceInfo, DeviceKind, Signer, SignerError};
+use crate::{DeviceInfo, DeviceKind, SignedTx, Signer, SignerError};
 
 /// Shared across every `async-hwi` backend.
 ///
@@ -101,8 +101,10 @@ impl Signer for LedgerSigner {
         ))
     }
 
-    async fn sign(&self, psbt: &mut EcxPsbt) -> Result<(), SignerError> {
+    async fn sign(&self, psbt: &EcxPsbt) -> Result<SignedTx, SignerError> {
         // Takes EcxPsbt: an unstamped PSBT cannot reach a device (Golden Rule 2).
-        self.inner.sign_tx(psbt.psbt_mut()).await.map_err(map_hwi)
+        let mut working = psbt.psbt().clone();
+        self.inner.sign_tx(&mut working).await.map_err(map_hwi)?;
+        Ok(SignedTx::Psbt(Box::new(working)))
     }
 }

@@ -4,12 +4,14 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Hardware wallet abstraction over async-hwi."
+description = "Hardware wallet abstraction over async-hwi and trezor-client."
 
 [dependencies]
 ecx-core.workspace = true
 bitcoin.workspace = true
 async-hwi.workspace = true
+trezor-client.workspace = true
 async-trait.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+tokio = { workspace = true, features = ["rt"] }

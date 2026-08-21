@@ -19,7 +19,7 @@ use bitcoin::{
 };
 use ecx_core::EcxPsbt;
 
-use crate::{DeviceInfo, DeviceKind, Signer, SignerError, ledger::map_hwi};
+use crate::{DeviceInfo, DeviceKind, SignedTx, Signer, SignerError, ledger::map_hwi};
 
 /// Probe serial ports for a Jade.
 pub async fn enumerate() -> Result<Vec<DeviceInfo>, SignerError> {
@@ -97,7 +97,9 @@ impl Signer for JadeSigner {
         })
     }
 
-    async fn sign(&self, psbt: &mut EcxPsbt) -> Result<(), SignerError> {
-        self.inner.sign_tx(psbt.psbt_mut()).await.map_err(map_hwi)
+    async fn sign(&self, psbt: &EcxPsbt) -> Result<SignedTx, SignerError> {
+        let mut working = psbt.psbt().clone();
+        self.inner.sign_tx(&mut working).await.map_err(map_hwi)?;
+        Ok(SignedTx::Psbt(Box::new(working)))
     }
 }

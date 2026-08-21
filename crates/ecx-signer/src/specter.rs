@@ -7,7 +7,7 @@ use async_hwi::{
 use bitcoin::bip32::{DerivationPath, Fingerprint, Xpub};
 use ecx_core::EcxPsbt;
 
-use crate::{DeviceInfo, DeviceKind, Signer, SignerError, ledger::map_hwi};
+use crate::{DeviceInfo, DeviceKind, SignedTx, Signer, SignerError, ledger::map_hwi};
 
 /// Probe serial ports for a Specter.
 ///
@@ -78,9 +78,11 @@ impl Signer for SpecterSigner {
         })
     }
 
-    async fn sign(&self, psbt: &mut EcxPsbt) -> Result<(), SignerError> {
-        HWI::sign_tx(&self.inner, psbt.psbt_mut())
+    async fn sign(&self, psbt: &EcxPsbt) -> Result<SignedTx, SignerError> {
+        let mut working = psbt.psbt().clone();
+        HWI::sign_tx(&self.inner, &mut working)
             .await
-            .map_err(map_hwi)
+            .map_err(map_hwi)?;
+        Ok(SignedTx::Psbt(Box::new(working)))
     }
 }

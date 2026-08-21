@@ -6,18 +6,23 @@
 //! Backends: `async-hwi` (Ledger, BitBox02, Coldcard, Jade, Specter), `trezor-client`
 //! (Trezor Model T / Safe 3 / Safe 5), and air-gapped PSBT over file or QR.
 
-use bitcoin::bip32::{DerivationPath, Fingerprint, Xpub};
+use bitcoin::{
+    Psbt, Transaction,
+    bip32::{DerivationPath, Fingerprint, Xpub},
+};
 use ecx_core::EcxPsbt;
 
 pub mod coldcard;
 pub mod jade;
 pub mod ledger;
 pub mod specter;
+pub mod trezor;
 
 pub use coldcard::ColdcardSigner;
 pub use jade::JadeSigner;
 pub use ledger::LedgerSigner;
 pub use specter::SpecterSigner;
+pub use trezor::TrezorSigner;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeviceKind {
@@ -99,7 +104,26 @@ pub trait Signer: Send + Sync {
     /// Ledger needs a registered wallet policy for anything but BIP86 taproot, so this is
     /// unimplemented for single-sig segwit until `register_wallet` lands (§12).
     async fn display_address(&self, path: &DerivationPath) -> Result<(), SignerError>;
-    async fn sign(&self, psbt: &mut EcxPsbt) -> Result<(), SignerError>;
+    async fn sign(&self, psbt: &EcxPsbt) -> Result<SignedTx, SignerError>;
+}
+
+/// What a device hands back after signing.
+///
+/// Devices genuinely differ here, and flattening the difference would mean lying to one of them:
+///
+/// - Most fill signatures into the PSBT, which then needs finalizing and extracting.
+/// - **Trezor returns the fully serialized signed transaction instead.** It emits a raw signature
+///   rather than a scriptSig, and `trezor-client` deliberately dropped its `apply_signature`
+///   helper because putting one back into a PSBT requires pubkey and script inspection. So it
+///   streams the finished transaction and we take it as-is.
+///
+/// Both shapes converge at `ecx_core::verify_signed`, which is what actually matters.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SignedTx {
+    /// Signatures filled into the PSBT. Still needs finalizing and extracting.
+    Psbt(Box<Psbt>),
+    /// A complete signed transaction, ready to verify.
+    Transaction(Box<Transaction>),
 }
 
 /// A device the app can see but has not connected to yet.
@@ -136,6 +160,10 @@ pub async fn enumerate() -> Result<Vec<DeviceInfo>, SignerError> {
         Ok(devices) => found.extend(devices),
         Err(e) => tracing::debug!(error = %e, "jade enumeration failed"),
     }
+    match trezor::enumerate() {
+        Ok(devices) => found.extend(devices),
+        Err(e) => tracing::debug!(error = %e, "trezor enumeration failed"),
+    }
 
     Ok(found)
 }
@@ -146,9 +174,11 @@ pub async fn connect(kind: DeviceKind) -> Result<Box<dyn Signer>, SignerError> {
         DeviceKind::Ledger => Ok(Box::new(LedgerSigner::connect()?)),
         DeviceKind::Coldcard => Ok(Box::new(ColdcardSigner::connect()?)),
         DeviceKind::Specter => Ok(Box::new(SpecterSigner::connect().await?)),
-        DeviceKind::Trezor => Err(SignerError::Unsupported {
-            what: "Trezor (blocking transport, needs its own thread — CLAUDE.md §5.5)".into(),
-        }),
+        DeviceKind::Trezor => {
+            // Connecting spawns the device thread and blocks on its handshake, so keep it off
+            // the async executor.
+            tokio_blocking(TrezorSigner::connect).await
+        }
         DeviceKind::BitBox02 => Err(SignerError::Unsupported {
             what: "BitBox02 (needs the pairing-code confirmation flow)".into(),
         }),
@@ -157,6 +187,16 @@ pub async fn connect(kind: DeviceKind) -> Result<Box<dyn Signer>, SignerError> {
             what: "air-gapped signing (export the PSBT instead)".into(),
         }),
     }
+}
+
+/// Run a blocking constructor without stalling the async executor.
+async fn tokio_blocking(
+    f: impl FnOnce() -> Result<TrezorSigner, SignerError> + Send + 'static,
+) -> Result<Box<dyn Signer>, SignerError> {
+    let signer = tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|e| SignerError::Transport(e.to_string()))??;
+    Ok(Box::new(signer))
 }
 
 /// Connect to whatever is attached, preferring the first device found.
