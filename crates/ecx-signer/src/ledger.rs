@@ -12,14 +12,27 @@ use ecx_core::EcxPsbt;
 
 use crate::{DeviceInfo, DeviceKind, Signer, SignerError};
 
-fn map(e: async_hwi::Error) -> SignerError {
-    let text = e.to_string();
-    let lower = text.to_lowercase();
+/// Shared across every `async-hwi` backend.
+///
+/// `async-hwi`'s `Display` for device errors is multi-line pretty-printed debug output, which
+/// wrecks a terminal line and a UI banner alike. Flatten it, and translate the conditions a user
+/// can actually do something about into instructions.
+pub(crate) fn map_hwi(e: async_hwi::Error) -> SignerError {
+    tracing::debug!(error = ?e, "hardware wallet error");
+
+    let raw = e.to_string();
+    let flat = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    let lower = flat.to_lowercase();
+
     if lower.contains("denied") || lower.contains("reject") || lower.contains("declin") {
-        SignerError::Declined
-    } else {
-        SignerError::Transport(text)
+        return SignerError::Declined;
     }
+    // The overwhelmingly common causes of an opaque device-level error: the device is locked, or
+    // it is sitting on the dashboard rather than in the Bitcoin app.
+    if lower.contains("status: unknown") || lower.contains("0x6") || lower.contains("locked") {
+        return SignerError::NotReady;
+    }
+    SignerError::Transport(flat)
 }
 
 /// List connected Ledgers.
@@ -55,8 +68,8 @@ impl LedgerSigner {
     /// `display_xpub(false)` matters for discovery: it reads the twelve candidate xpubs without a
     /// button press each (`CLAUDE.md` §5.6).
     pub fn connect() -> Result<Self, SignerError> {
-        let ledger = Ledger::<TransportHID>::try_connect_hid().map_err(map)?;
-        let ledger = ledger.display_xpub(false).map_err(map)?;
+        let ledger = Ledger::<TransportHID>::try_connect_hid().map_err(map_hwi)?;
+        let ledger = ledger.display_xpub(false).map_err(map_hwi)?;
         Ok(Self { inner: ledger })
     }
 }
@@ -68,16 +81,16 @@ impl Signer for LedgerSigner {
     }
 
     async fn version(&self) -> Result<String, SignerError> {
-        let v = self.inner.get_version().await.map_err(map)?;
+        let v = self.inner.get_version().await.map_err(map_hwi)?;
         Ok(format!("{}.{}.{}", v.major, v.minor, v.patch))
     }
 
     async fn master_fingerprint(&self) -> Result<Fingerprint, SignerError> {
-        self.inner.get_master_fingerprint().await.map_err(map)
+        self.inner.get_master_fingerprint().await.map_err(map_hwi)
     }
 
     async fn extended_pubkey(&self, path: &DerivationPath) -> Result<Xpub, SignerError> {
-        self.inner.get_extended_pubkey(path).await.map_err(map)
+        self.inner.get_extended_pubkey(path).await.map_err(map_hwi)
     }
 
     async fn display_address(&self, _path: &DerivationPath) -> Result<(), SignerError> {
@@ -90,6 +103,6 @@ impl Signer for LedgerSigner {
 
     async fn sign(&self, psbt: &mut EcxPsbt) -> Result<(), SignerError> {
         // Takes EcxPsbt: an unstamped PSBT cannot reach a device (Golden Rule 2).
-        self.inner.sign_tx(psbt.psbt_mut()).await.map_err(map)
+        self.inner.sign_tx(psbt.psbt_mut()).await.map_err(map_hwi)
     }
 }

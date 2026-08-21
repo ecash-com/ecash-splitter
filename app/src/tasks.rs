@@ -5,9 +5,8 @@
 
 use std::sync::OnceLock;
 
-use ecx_chain::{ChainProfile, ChainSource, EsploraChain, ScanReadiness, TipInfo, now_unix};
-use ecx_signer::{LedgerSigner, Signer};
-use ecx_wallet::{AccountCandidate, DEFAULT_ACCOUNTS_PROBED, candidates, discover};
+use ecx_chain::{ChainProfile, EsploraChain, ScanReadiness, TipInfo};
+use ecx_split::SplitEvent;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -23,30 +22,42 @@ pub fn rt() -> &'static Runtime {
 /// Read the chain tip, height and timestamp. Feeds both the header status and the sync gate.
 pub async fn chain_tip(profile: ChainProfile) -> Result<(TipInfo, ScanReadiness), String> {
     let chain = EsploraChain::new(profile).map_err(|e| e.to_string())?;
-    let tip = chain.tip().await.map_err(|e| e.to_string())?;
-    Ok((tip, ScanReadiness::assess(tip, now_unix())))
+    ecx_split::chain_status(&chain)
+        .await
+        .map_err(|e| e.to_string())
 }
 
-/// Connect and read identity. Ledger takes its PIN on-device, so there is nothing to prompt for.
+/// Connect and read identity. Every supported device takes its PIN on-device, so there is
+/// nothing for the app to prompt for.
 pub async fn connect() -> Result<DeviceSession, String> {
-    let signer = LedgerSigner::connect().map_err(|e| e.to_string())?;
-    let fingerprint = signer
-        .master_fingerprint()
+    let signer = ecx_signer::connect_any().await.map_err(|e| e.to_string())?;
+    let label = device_label(signer.kind());
+    let id = ecx_split::identify(signer.as_ref(), label)
         .await
         .map_err(|e| e.to_string())?;
-    let version = signer.version().await.unwrap_or_else(|_| "unknown".into());
     Ok(DeviceSession {
-        kind: signer.kind(),
-        label: "Ledger".into(),
-        version,
-        fingerprint,
+        kind: id.kind,
+        label: id.label,
+        version: id.version,
+        fingerprint: id.fingerprint,
     })
 }
 
-/// The full discovery run: connect, read twelve xpubs, scan each account.
-///
-/// Reconnects rather than holding a device handle across the UI boundary — the connection is
-/// cheap and this keeps USB state out of the render layer entirely.
+fn device_label(kind: ecx_signer::DeviceKind) -> String {
+    match kind {
+        ecx_signer::DeviceKind::Ledger => "Ledger",
+        ecx_signer::DeviceKind::Coldcard => "Coldcard",
+        ecx_signer::DeviceKind::Specter => "Specter",
+        ecx_signer::DeviceKind::BitBox02 => "BitBox02",
+        ecx_signer::DeviceKind::Jade => "Jade",
+        ecx_signer::DeviceKind::Trezor => "Trezor",
+        ecx_signer::DeviceKind::AirGap => "Air-gapped",
+    }
+    .to_string()
+}
+
+/// The full discovery run. The sequence lives in `ecx-split`; this only adapts its events into
+/// the channel the UI listens on, which is what keeps the CLI and the GUI in step.
 pub async fn run_discovery(profile: ChainProfile, tx: UnboundedSender<Progress>) {
     if let Err(message) = discovery_inner(profile, &tx).await {
         let _ = tx.send(Progress::Failed(message));
@@ -57,51 +68,33 @@ async fn discovery_inner(
     profile: ChainProfile,
     tx: &UnboundedSender<Progress>,
 ) -> Result<(), String> {
-    let signer = LedgerSigner::connect().map_err(|e| e.to_string())?;
-    let fingerprint = signer
-        .master_fingerprint()
-        .await
-        .map_err(|e| e.to_string())?;
-    let version = signer.version().await.unwrap_or_else(|_| "unknown".into());
-
-    let session = DeviceSession {
-        kind: signer.kind(),
-        label: "Ledger".into(),
-        version,
-        fingerprint,
-    };
-    let _ = tx.send(Progress::Connected(session));
-
-    // Read every candidate xpub. `display_xpub(false)` means no button press per read (§5.6).
-    let candidates: Vec<AccountCandidate> = candidates(DEFAULT_ACCOUNTS_PROBED);
-    let total = candidates.len();
-    let mut xpubs = Vec::with_capacity(total);
-    for (scanned, candidate) in candidates.iter().enumerate() {
-        let _ = tx.send(Progress::Step {
-            phase: DiscoveryPhase::ReadingKeys,
-            scanned,
-            total,
-            label: format!("{} {}", candidate.kind.label(), candidate.path),
-        });
-        let xpub = signer
-            .extended_pubkey(&candidate.path)
-            .await
-            .map_err(|e| format!("reading {}: {e}", candidate.path))?;
-        xpubs.push((candidate.clone(), xpub));
-    }
-
     let chain = EsploraChain::new(profile).map_err(|e| e.to_string())?;
-    let tip = chain.tip().await.map_err(|e| e.to_string())?;
-    let readiness = ScanReadiness::assess(tip, now_unix());
+    let signer = ecx_signer::connect_any().await.map_err(|e| e.to_string())?;
+    let label = device_label(signer.kind());
 
-    let tx_progress = tx.clone();
-    let accounts = discover(&chain, readiness, fingerprint, &xpubs, move |p| {
-        let _ = tx_progress.send(Progress::Step {
-            phase: DiscoveryPhase::Scanning,
-            scanned: p.scanned,
-            total: p.total,
-            label: format!("{} {}", p.current.kind.label(), p.current.path),
-        });
+    let tx_events = tx.clone();
+    let (_, accounts) = ecx_split::discover(&chain, signer.as_ref(), label, move |event| {
+        let progress = match event {
+            SplitEvent::Connected(id) => Progress::Connected(DeviceSession {
+                kind: id.kind,
+                label: id.label,
+                version: id.version,
+                fingerprint: id.fingerprint,
+            }),
+            SplitEvent::ReadingKeys { done, total, label } => Progress::Step {
+                phase: DiscoveryPhase::ReadingKeys,
+                scanned: done,
+                total,
+                label,
+            },
+            SplitEvent::Scanning { done, total, label } => Progress::Step {
+                phase: DiscoveryPhase::Scanning,
+                scanned: done,
+                total,
+                label,
+            },
+        };
+        let _ = tx_events.send(progress);
     })
     .await
     .map_err(|e| e.to_string())?;
@@ -111,19 +104,13 @@ async fn discovery_inner(
 }
 
 /// Derive the ECX destination address from the device.
-///
-/// This is public-key math done locally — the device is only asked for an xpub. It is **not**
-/// the same as the user verifying the address on the device screen, which needs a registered
-/// Ledger wallet policy (`CLAUDE.md` §5.3).
 pub async fn derive_destination() -> Result<(bitcoin::Address, String), String> {
-    let signer = LedgerSigner::connect().map_err(|e| e.to_string())?;
-    let path = ecx_wallet::build::destination_account_path();
-    let xpub = signer
-        .extended_pubkey(&path)
+    let signer = ecx_signer::connect_any().await.map_err(|e| e.to_string())?;
+    let destination = ecx_split::device_destination(signer.as_ref())
         .await
-        .map_err(|e| format!("reading {path}: {e}"))?;
-    let address = ecx_wallet::device_destination(&xpub).map_err(|e| e.to_string())?;
-    Ok((address, format!("{path}/0/0")))
+        .map_err(|e| e.to_string())?;
+    let path = ecx_wallet::build::destination_account_path();
+    Ok((destination.address().clone(), format!("{path}/0/0")))
 }
 
 /// Build the sweep and summarize it for the review screen. Stops short of signing.
@@ -134,18 +121,18 @@ pub async fn build_sweep_summary(
     fingerprint: bitcoin::bip32::Fingerprint,
 ) -> Result<ecx_wallet::SweepSummary, String> {
     let chain = EsploraChain::new(profile).map_err(|e| e.to_string())?;
-    let tip = chain.tip().await.map_err(|e| e.to_string())?;
-    let readiness = ScanReadiness::assess(tip, now_unix());
-
-    let psbt = ecx_wallet::build_sweep(
+    // The UI already required its own confirmation before getting here (§7.5).
+    let destination = ecx_split::Destination::Pasted {
+        address: destination,
+        acknowledged: true,
+    };
+    ecx_split::build_sweep(
         &chain,
-        readiness,
         &account,
         &destination,
+        fingerprint,
         ecx_wallet::build::DEFAULT_FEERATE_SAT_PER_VB,
     )
     .await
-    .map_err(|e| e.to_string())?;
-
-    ecx_wallet::summarize(&psbt, &destination, fingerprint).map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())
 }

@@ -4,7 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Hardware wallet abstraction: async-hwi, trezor-client, and air-gapped PSBT."
+description = "Hardware wallet abstraction over async-hwi."
 
 [dependencies]
 ecx-core.workspace = true

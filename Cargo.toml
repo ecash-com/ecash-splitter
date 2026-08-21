@@ -1,6 +1,14 @@
 [workspace]
 resolver = "3"
-members = ["crates/ecx-core", "crates/ecx-chain", "crates/ecx-signer", "crates/ecx-wallet", "crates/ecx-split", "app"]
+members = [
+    "crates/ecx-core",
+    "crates/ecx-chain",
+    "crates/ecx-signer",
+    "crates/ecx-wallet",
+    "crates/ecx-split",
+    "app",
+    "cli",
+]
 
 [workspace.package]
 edition = "2024"
@@ -15,9 +23,11 @@ bdk_wallet = "3.1.0"
 bdk_esplora = { version = "0.22.2", default-features = false, features = ["async-https-rustls", "tokio"] }
 esplora-client = { version = "0.12.3", default-features = false, features = ["async-https-rustls", "tokio"] }
 futures = "0.3"
-# default features include `service`, which pulls reqwest into the signer crate. We want no
-# network here at all (CLAUDE.md Golden Rule 8), so enable only the transports we use.
-async-hwi = { version = "0.0.32", default-features = false, features = ["ledger"] }
+# `jade` pulls reqwest, because Jade's PIN unlock talks to Blockstream's pinserver over the
+# network — confirming the open question in CLAUDE.md §5.5. That collides with Golden Rule 8, so
+# Jade is USB-unsupported; its holders use the air-gap path. `service` (a remote signing service)
+# is excluded for the same reason. Everything else is local transport only.
+async-hwi = { version = "0.0.32", default-features = false, features = ["ledger", "coldcard", "specter"] }
 trezor-client = { version = "0.1.6", features = ["bitcoin"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 async-trait = "0.1"

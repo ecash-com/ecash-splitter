@@ -1,18 +1,20 @@
 [package]
-name = "ecx-split"
+name = "ecash-splitter-cli"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "The split plan: enumerate, order, build, verify, broadcast, track."
+description = "Command-line eCash splitter. Same core as the desktop app."
+
+[[bin]]
+name = "ecx"
+path = "src/main.rs"
 
 [dependencies]
 ecx-core.workspace = true
 ecx-chain.workspace = true
 ecx-signer.workspace = true
 ecx-wallet.workspace = true
+ecx-split.workspace = true
 bitcoin.workspace = true
-thiserror.workspace = true
-
-[dev-dependencies]
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tokio.workspace = true
