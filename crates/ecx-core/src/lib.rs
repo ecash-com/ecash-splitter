@@ -248,6 +248,17 @@ pub fn verify_signed(tx: &Transaction, intent: &TxIntent) -> Result<(), Invarian
 // Internals
 // ---------------------------------------------------------------------------
 
+/// Last check before publishing: the locktime and sequences are still what make this an eCash
+/// transaction rather than a Bitcoin one.
+///
+/// [`verify_signed`] already covers this, and more. This exists for the broadcast path, which may
+/// be handed a transaction from somewhere else — a hex pasted back from an air-gapped device, or
+/// one saved from an earlier run — where there is no intent to compare against. Cheap, and the
+/// last chance to catch a transaction that lost its replay protection in transit.
+pub fn assert_broadcastable(tx: &Transaction) -> Result<(), InvariantError> {
+    assert_tx_invariants(tx)
+}
+
 /// §8.1 and §8.2. Applied to both the unsigned and the signed transaction.
 fn assert_tx_invariants(tx: &Transaction) -> Result<(), InvariantError> {
     let found = tx.lock_time.to_consensus_u32();

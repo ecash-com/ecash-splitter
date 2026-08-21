@@ -7,10 +7,11 @@ Not a wallet. It builds a replay-protected sweep, has a hardware device sign it,
 bytes that come back, and broadcasts to ECX. Available as a desktop app and a CLI — both share
 the same core, so they behave identically.
 
-> **Pre-release.** eCash activates at block 963,648. Signing works today; **broadcasting does
-> not**, because until the chains diverge no endpoint can be proven to be ECX. Alpha and beta
-> coins are also destroyed and re-issued at full launch (973,728, 2026-10-31) — nothing produced
-> before then is durable value.
+> **Pre-release.** eCash activates at block 963,648. Everything works up to and including
+> signing; **broadcasting stays refused until the chains diverge**, because before then no
+> endpoint can be proven to be ECX rather than Bitcoin. `ecx status` says where that stands.
+> Alpha and beta coins are also destroyed and re-issued at full launch (973,728, 2026-10-31) —
+> nothing produced before then is durable value.
 
 ## Requirements
 
@@ -58,10 +59,12 @@ cargo run -p ecash-splitter-cli -- <command>
 | `status` | Chain tip, whether it is caught up, and how far off the fork is |
 | `discover` | Find accounts with coins on the connected device |
 | `build --account <PATH> --to <ADDRESS>` | Build the sweep PSBT and print it |
-| `sign --to <ADDRESS>` | Build, show the PSBT, confirm, sign on the device, verify. Does **not** broadcast |
+| `sign --to <ADDRESS>` | Build, show the PSBT, confirm, sign on the device, verify. Add `--broadcast` to publish |
+| `broadcast --tx <HEX>` | Publish a transaction signed earlier |
+| `track --txid <TXID>` | How deeply buried a broadcast transaction is |
 
 Useful options: `--endpoint <URL>`, `--accounts <N>` (how many account indices to search per
-address type), `--gap <N>`, `--feerate <SAT_PER_VB>`, `--psbt-out <FILE>`.
+address type), `--gap <N>`, `--feerate <SAT_PER_VB>`, `--psbt-out <FILE>`, `--broadcast`.
 
 ```sh
 # find your accounts
@@ -86,6 +89,17 @@ ECX_ESPLORA_URL=https://explorer.beta.ecash.ninja/api cargo run -p ecash-splitte
 
 3. **In code** — `PRESETS` in `crates/ecx-chain/src/profile.rs` is the only place a hostname is
    written.
+
+The fork probe needs Bitcoin's block hash at the fork height, which will not exist until Bitcoin
+mines it. Set it the same way, without a rebuild:
+
+```sh
+ECX_BITCOIN_FORK_HASH=<bitcoin's hash at block 963648> cargo run -p ecash-splitter
+```
+
+`BITCOIN_HASH_AT_FORK` in `profile.rs`'s sibling module is where it gets compiled in for a
+release. **Until it is set, broadcasting is refused** — which is correct: with no independent
+reference, an ECX endpoint cannot be told apart from Bitcoin.
 
 `/api` is appended if omitted and trailing slashes are trimmed, so either form works. The
 explorer link is derived from the API base by removing `/api`; override it separately with

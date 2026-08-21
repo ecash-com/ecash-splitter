@@ -291,6 +291,30 @@ fn verify_catches_removed_output() {
 // -------------------------------------------------------------------------
 
 #[test]
+fn broadcast_refuses_a_transaction_that_lost_its_replay_protection() {
+    // The broadcast path may be handed a transaction from elsewhere — a pasted hex, a saved
+    // run — with no intent to compare against. It must still refuse to publish one that would
+    // replay onto Bitcoin.
+    let ecx = finalize_ecx_psbt(good_psbt(), FEE_CAP).unwrap();
+    let good = mock_sign(&ecx);
+    assert_eq!(assert_broadcastable(&good), Ok(()));
+
+    let mut final_sequence = good.clone();
+    final_sequence.input[0].sequence = Sequence::MAX;
+    assert_eq!(
+        assert_broadcastable(&final_sequence),
+        Err(InvariantError::FinalSequence { index: 0 })
+    );
+
+    let mut wrong_locktime = good;
+    wrong_locktime.lock_time = LockTime::from_consensus(800_000);
+    assert_eq!(
+        assert_broadcastable(&wrong_locktime),
+        Err(InvariantError::WrongLockTime { found: 800_000 })
+    );
+}
+
+#[test]
 fn phase_boundaries() {
     assert_eq!(Phase::at_height(ECASH_HEIGHT - 1), Phase::PreFork);
     assert_eq!(Phase::at_height(ALPHA_HEIGHT), Phase::Alpha);

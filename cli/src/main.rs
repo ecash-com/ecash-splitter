@@ -252,6 +252,46 @@ fn confirm(summary: &ecx_wallet::SweepSummary, profile: &ChainProfile) -> Result
     Ok(answer.trim() == "sign")
 }
 
+/// Publish, with the fork probe as the gate.
+async fn publish(
+    chain: &EsploraChain,
+    tx: &bitcoin::Transaction,
+    profile: &ChainProfile,
+) -> Result<(), String> {
+    let readiness = ecx_split::broadcast_readiness(chain)
+        .await
+        .map_err(|e| e.to_string())?;
+    if let Some(why) = readiness.explain() {
+        return Err(format!("cannot broadcast — {why}"));
+    }
+
+    let txid = ecx_split::broadcast(chain, tx)
+        .await
+        .map_err(|e| e.to_string())?;
+    println!();
+    println!("BROADCAST to {}", profile.host());
+    println!("txid        : {txid}");
+    println!("explorer    : {}", profile.tx_url(&txid.to_string()));
+    println!();
+    println!(
+        "Wait for {} confirmations before treating this as settled — post-fork difficulty resets\n\
+         to minimum, so early reorg risk is elevated. Track it with:\n  ecx track --txid {txid}",
+        ecx_split::MIN_CONFIRMATIONS
+    );
+    Ok(())
+}
+
+fn report_unbroadcast(tx: &bitcoin::Transaction, profile: &ChainProfile) {
+    let txid = tx.compute_txid();
+    println!();
+    println!("explorer    : {}", profile.tx_url(&txid.to_string()));
+    println!("              (nothing there yet — this has not been broadcast)");
+    println!();
+    println!(
+        "NOT broadcast. Re-run with --broadcast, or publish it later with:\n  ecx broadcast --tx <hex>"
+    );
+}
+
 async fn run(command: &str, args: &[String]) -> Result<(), String> {
     match command {
         "devices" => {
@@ -452,18 +492,54 @@ async fn run(command: &str, args: &[String]) -> Result<(), String> {
             println!("nLockTime   : {}", tx.lock_time.to_consensus_u32());
             println!();
             println!("{}", bitcoin::consensus::encode::serialize_hex(&tx));
-            println!();
-            println!(
-                "explorer    : {}",
-                profile.tx_url(&tx.compute_txid().to_string())
-            );
-            println!("              (nothing there yet — this has not been broadcast)");
-            println!();
-            println!(
-                "NOT broadcast. eCash has not activated at block {}, so no endpoint can pass the \n\
-                 fork probe. Keep this hex if you want to broadcast it yourself later.",
-                ecx_core::ECASH_HEIGHT
-            );
+            if has(args, "--broadcast") {
+                publish(&chain, &tx, &profile).await
+            } else {
+                report_unbroadcast(&tx, &profile);
+                Ok(())
+            }
+        }
+
+        "broadcast" => {
+            let hex = flag(args, "--tx").ok_or("broadcast needs --tx <HEX>")?;
+            let tx: bitcoin::Transaction = bitcoin::consensus::encode::deserialize_hex(hex.trim())
+                .map_err(|e| format!("not a valid transaction: {e}"))?;
+            let profile = profile(args);
+            let chain = EsploraChain::new(profile.clone()).map_err(|e| e.to_string())?;
+            publish(&chain, &tx, &profile).await
+        }
+
+        "track" => {
+            let txid: bitcoin::Txid = flag(args, "--txid")
+                .ok_or("track needs --txid <TXID>")?
+                .trim()
+                .parse()
+                .map_err(|_| "that is not a valid txid".to_string())?;
+            let profile = profile(args);
+            let chain = EsploraChain::new(profile.clone()).map_err(|e| e.to_string())?;
+            match ecx_split::track(&chain, txid)
+                .await
+                .map_err(|e| e.to_string())?
+            {
+                ecx_chain::TxState::Unknown => {
+                    println!("not seen by {} — not broadcast, or dropped", profile.host());
+                }
+                ecx_chain::TxState::InMempool => println!("in the mempool, not yet mined"),
+                ecx_chain::TxState::Confirmed {
+                    height,
+                    confirmations,
+                } => {
+                    println!("confirmed in block {height}, {confirmations} confirmation(s)");
+                    if confirmations < ecx_split::MIN_CONFIRMATIONS {
+                        // Post-fork difficulty resets to minimum, so reorg risk is elevated.
+                        println!(
+                            "  wait for {} — post-fork difficulty is at minimum, so early reorg risk is elevated",
+                            ecx_split::MIN_CONFIRMATIONS
+                        );
+                    }
+                }
+            }
+            println!("explorer    : {}", profile.tx_url(&txid.to_string()));
             Ok(())
         }
 

@@ -6,7 +6,7 @@
 use bitcoin::{BlockHash, Transaction, Txid};
 use esplora_client::AsyncClient;
 
-use crate::{BroadcastPermit, ChainError, ChainProfile, ChainSource, TipInfo};
+use crate::{BroadcastPermit, ChainError, ChainProfile, ChainSource, TipInfo, TxState};
 
 pub struct EsploraChain {
     profile: ChainProfile,
@@ -112,6 +112,29 @@ impl ChainSource for EsploraChain {
 
     async fn raw_tx(&self, txid: Txid) -> Result<Option<Transaction>, ChainError> {
         self.client.get_tx(&txid).await.map_err(|e| self.err(e))
+    }
+
+    async fn tx_state(&self, txid: Txid) -> Result<TxState, ChainError> {
+        let status = match self.client.get_tx_status(&txid).await {
+            Ok(s) => s,
+            // Esplora 404s on a transaction it has never seen, which is a state rather than a
+            // failure: not broadcast, or dropped from the mempool.
+            Err(esplora_client::Error::HttpResponse { status: 404, .. }) => {
+                return Ok(TxState::Unknown);
+            }
+            Err(e) => return Err(self.err(e)),
+        };
+
+        let Some(height) = status.block_height.filter(|_| status.confirmed) else {
+            return Ok(TxState::InMempool);
+        };
+
+        let tip = self.client.get_height().await.map_err(|e| self.err(e))?;
+        Ok(TxState::Confirmed {
+            height,
+            // A transaction in the tip block has one confirmation, not zero.
+            confirmations: tip.saturating_sub(height).saturating_add(1),
+        })
     }
 
     async fn broadcast(

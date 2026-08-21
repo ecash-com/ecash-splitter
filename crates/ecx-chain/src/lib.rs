@@ -40,6 +40,9 @@ pub trait ChainSource: Send + Sync {
     async fn tip(&self) -> Result<TipInfo, ChainError>;
     async fn block_hash_at(&self, height: u32) -> Result<Option<BlockHash>, ChainError>;
     async fn raw_tx(&self, txid: Txid) -> Result<Option<Transaction>, ChainError>;
+    /// Where a transaction stands: unseen, in the mempool, or buried under confirmations.
+    async fn tx_state(&self, txid: Txid) -> Result<TxState, ChainError>;
+
     /// Broadcast. Requires a [`BroadcastPermit`], which only a [`ForkProbe::ConfirmedEcx`] can
     /// mint — so broadcasting to a Bitcoin endpoint is a compile error, not a runtime check.
     async fn broadcast(
@@ -101,22 +104,50 @@ impl ForkProbe {
     }
 }
 
-/// Bitcoin mainnet's block hash at [`ECASH_HEIGHT`].
-///
-/// **`None` until Bitcoin mines that block.** Fill it in from a trusted Bitcoin source once the
-/// height is reached, refresh per phase, and never derive it at runtime from the endpoint under
-/// test — that would defeat the entire probe.
-pub const BITCOIN_HASH_AT_FORK: Option<BlockHash> = None;
+/// Environment override for [`bitcoin_hash_at_fork`], so the probe can be armed the moment the
+/// block exists, without waiting for a release.
+pub const ENV_BITCOIN_FORK_HASH: &str = "ECX_BITCOIN_FORK_HASH";
 
-/// Prove an endpoint is ECX. `bitcoin_reference` is [`BITCOIN_HASH_AT_FORK`], threaded in so
-/// tests can supply one.
-pub async fn probe_fork(
+/// Bitcoin mainnet's block hash at [`ECASH_HEIGHT`], compiled in.
+///
+/// **`None` until Bitcoin mines that block** — at 2026-08-21 its tip was ~963,480, still short of
+/// 963,648. Fill this in from a trusted Bitcoin source once the height is reached, and refresh it
+/// per phase.
+pub const BITCOIN_HASH_AT_FORK: Option<&str> = None;
+
+/// Bitcoin's hash at the fork height: from the environment if set, otherwise compiled in.
+///
+/// **Never derive this from the endpoint under test.** The probe works by comparing that
+/// endpoint's answer against an independent one; taking both from the same place would compare a
+/// chain against itself and clear anything.
+pub fn bitcoin_hash_at_fork() -> Option<BlockHash> {
+    if let Ok(text) = std::env::var(ENV_BITCOIN_FORK_HASH) {
+        let trimmed = text.trim();
+        if !trimmed.is_empty() {
+            match trimmed.parse::<BlockHash>() {
+                Ok(hash) => return Some(hash),
+                Err(e) => tracing::warn!(%e, "ignoring unparseable {ENV_BITCOIN_FORK_HASH}"),
+            }
+        }
+    }
+    BITCOIN_HASH_AT_FORK.and_then(|h| h.parse().ok())
+}
+
+/// Prove an endpoint is ECX, using the configured Bitcoin reference hash.
+pub async fn probe_fork(source: &dyn ChainSource) -> Result<ForkProbe, ChainError> {
+    probe_fork_against(source, bitcoin_hash_at_fork()).await
+}
+
+/// As [`probe_fork`], with the reference supplied explicitly. Tests use this.
+pub async fn probe_fork_against(
     source: &dyn ChainSource,
     bitcoin_reference: Option<BlockHash>,
-    bitcoin_tip: u32,
 ) -> Result<ForkProbe, ChainError> {
     let Some(reference) = bitcoin_reference else {
-        return Ok(ForkProbe::ChainsNotYetDiverged { bitcoin_tip });
+        // No reference means the chains have not diverged yet, so nothing can be proven.
+        return Ok(ForkProbe::ChainsNotYetDiverged {
+            bitcoin_tip: source.tip_height().await.unwrap_or(0),
+        });
     };
     match source.block_hash_at(ECASH_HEIGHT).await? {
         None => Ok(ForkProbe::NotSyncedToFork {
@@ -124,6 +155,31 @@ pub async fn probe_fork(
         }),
         Some(hash) if hash == reference => Ok(ForkProbe::IsBitcoin),
         Some(hash) => Ok(ForkProbe::ConfirmedEcx { hash }),
+    }
+}
+
+/// Where a transaction stands on a chain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TxState {
+    /// The endpoint has never seen it. Either not broadcast, or dropped.
+    Unknown,
+    /// Accepted into the mempool but not mined.
+    InMempool,
+    /// Mined, and buried under this many blocks (1 = in the tip block).
+    Confirmed { height: u32, confirmations: u32 },
+}
+
+impl TxState {
+    pub fn confirmations(&self) -> u32 {
+        match self {
+            TxState::Confirmed { confirmations, .. } => *confirmations,
+            _ => 0,
+        }
+    }
+
+    /// Post-fork difficulty resets to minimum, so reorg risk is elevated and six is not enough.
+    pub fn is_deep_enough(&self, required: u32) -> bool {
+        self.confirmations() >= required
     }
 }
 
@@ -272,7 +328,21 @@ mod tests {
 
     #[test]
     fn probe_cannot_run_before_the_chains_diverge() {
-        // BITCOIN_HASH_AT_FORK is None until Bitcoin mines block 963,648.
+        // Nothing is compiled in until Bitcoin mines block 963,648. The env override is what
+        // arms the probe the moment it does, without waiting for a release.
         assert!(BITCOIN_HASH_AT_FORK.is_none());
+    }
+
+    #[test]
+    fn confirmation_depth_reads_off_tx_state() {
+        assert_eq!(TxState::Unknown.confirmations(), 0);
+        assert_eq!(TxState::InMempool.confirmations(), 0);
+        assert!(!TxState::InMempool.is_deep_enough(1));
+        let deep = TxState::Confirmed {
+            height: 963_700,
+            confirmations: 30,
+        };
+        assert!(deep.is_deep_enough(30));
+        assert!(!deep.is_deep_enough(31));
     }
 }

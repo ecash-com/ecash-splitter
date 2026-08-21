@@ -124,13 +124,25 @@ pub enum Stage {
         account: Box<DiscoveredAccount>,
         built: Box<BuiltSweep>,
     },
-    /// Step 8 — signed and **verified**, but deliberately not broadcast.
+    /// Step 8 — signed and **verified**. Broadcast only if the fork probe clears.
     Signed {
         session: DeviceSession,
         account: Box<DiscoveredAccount>,
         built: Box<BuiltSweep>,
         txid: String,
         raw_hex: String,
+        /// Why broadcasting is or is not possible. `None` while still being checked.
+        readiness: Option<ecx_split::BroadcastReadiness>,
+        /// In flight. A flag rather than its own stage: a failed broadcast leaves the
+        /// transaction perfectly valid, so there is nothing to restore and nowhere to go back
+        /// to — the screen just stops spinning and shows why.
+        broadcasting: bool,
+    },
+    /// Step 9 — published. From here it is only a question of depth.
+    Broadcast {
+        session: DeviceSession,
+        txid: String,
+        state: ecx_chain::TxState,
     },
 }
 
@@ -178,7 +190,8 @@ impl Stage {
             | Stage::Building { session: s, .. }
             | Stage::Review { session: s, .. }
             | Stage::Signing { session: s, .. }
-            | Stage::Signed { session: s, .. } => Some(s),
+            | Stage::Signed { session: s, .. }
+            | Stage::Broadcast { session: s, .. } => Some(s),
             _ => None,
         }
     }
@@ -186,7 +199,14 @@ impl Stage {
     pub fn is_busy(&self) -> bool {
         matches!(
             self,
-            Stage::Connecting | Stage::Discovering { .. } | Stage::Building { .. }
+            Stage::Connecting
+                | Stage::Discovering { .. }
+                | Stage::Building { .. }
+                | Stage::Signing { .. }
+                | Stage::Signed {
+                    broadcasting: true,
+                    ..
+                }
         )
     }
 }
@@ -209,6 +229,16 @@ pub enum Progress {
 #[derive(Debug, Clone)]
 pub enum BuildOutcome {
     Ready(Box<BuiltSweep>),
+    Failed(String),
+}
+
+/// Result of publishing.
+#[derive(Debug, Clone)]
+pub enum BroadcastOutcome {
+    Published {
+        txid: String,
+        state: ecx_chain::TxState,
+    },
     Failed(String),
 }
 

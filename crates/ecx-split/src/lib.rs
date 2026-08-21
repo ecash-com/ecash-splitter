@@ -9,7 +9,7 @@
 //! split ordering is what protects the other direction — it is not an optimization.
 
 use bitcoin::{Address, Amount, Transaction, Txid, bip32::Fingerprint};
-use ecx_chain::{BroadcastPermit, ChainSource, EsploraChain, ScanReadiness, TipInfo, now_unix};
+use ecx_chain::{ChainSource, EsploraChain, ForkProbe, ScanReadiness, TipInfo, TxState, now_unix};
 use ecx_core::{EcxPsbt, TxIntent};
 use ecx_signer::{DeviceKind, SignedTx, Signer};
 use ecx_wallet::{
@@ -101,6 +101,8 @@ pub enum SplitError {
     Build(#[from] ecx_wallet::BuildError),
     #[error("invariant: {0}")]
     Invariant(#[from] ecx_core::InvariantError),
+    #[error("{}", .0.as_error().map(|e| e.to_string()).unwrap_or_else(|| "not broadcastable".into()))]
+    NotBroadcastable(Box<ForkProbe>),
 }
 
 /// Post-fork difficulty resets to minimum, so reorg risk is elevated and six confirmations is
@@ -315,17 +317,85 @@ pub fn verify_imported(signed: SignedTx, intent: &TxIntent) -> Result<Transactio
     Ok(tx)
 }
 
+/// Why broadcasting is not currently possible, in words a user can act on.
+///
+/// Returned rather than a bare bool so both frontends explain the same thing, and so "not yet"
+/// is never mistaken for "something went wrong".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BroadcastReadiness {
+    /// The endpoint was proven to be ECX. Carries the proof.
+    Ready(ForkProbe),
+    /// Bitcoin has not reached the fork height, or we have no reference hash for it yet, so no
+    /// endpoint can be distinguished from Bitcoin.
+    ChainsNotDiverged { bitcoin_tip: u32 },
+    /// The endpoint is Bitcoin. Refuse permanently.
+    EndpointIsBitcoin,
+    /// The endpoint has not synced past the fork.
+    EndpointBehind { tip: u32 },
+}
+
+impl BroadcastReadiness {
+    pub fn is_ready(&self) -> bool {
+        matches!(self, BroadcastReadiness::Ready(_))
+    }
+
+    /// One sentence explaining the block, or `None` when ready.
+    pub fn explain(&self) -> Option<String> {
+        match self {
+            BroadcastReadiness::Ready(_) => None,
+            BroadcastReadiness::ChainsNotDiverged { bitcoin_tip } => Some(format!(
+                "eCash has not activated yet. Bitcoin is at block {bitcoin_tip} and the fork is \
+                 at {}, so no endpoint can be told apart from Bitcoin and there is nowhere valid \
+                 to send this.",
+                ecx_core::ECASH_HEIGHT
+            )),
+            BroadcastReadiness::EndpointIsBitcoin => Some(
+                "This endpoint is Bitcoin, not eCash. Broadcasting here would publish a \
+                 transaction Bitcoin will never accept — and if it did, it would spend real BTC."
+                    .to_string(),
+            ),
+            BroadcastReadiness::EndpointBehind { tip } => Some(format!(
+                "This endpoint is at block {tip} and has not synced past the fork at {}, so it \
+                 cannot yet be proven to be eCash.",
+                ecx_core::ECASH_HEIGHT
+            )),
+        }
+    }
+}
+
+/// Ask whether this endpoint may be broadcast to.
+///
+/// This is the fork probe (Golden Rule 4), phrased for a UI. Call it to decide whether to offer
+/// a broadcast button; call [`broadcast`] to actually do it — which runs the probe again, so a
+/// stale answer here cannot authorise anything.
+pub async fn broadcast_readiness(chain: &EsploraChain) -> Result<BroadcastReadiness, SplitError> {
+    Ok(match ecx_chain::probe_fork(chain).await? {
+        probe @ ForkProbe::ConfirmedEcx { .. } => BroadcastReadiness::Ready(probe),
+        ForkProbe::ChainsNotYetDiverged { bitcoin_tip } => {
+            BroadcastReadiness::ChainsNotDiverged { bitcoin_tip }
+        }
+        ForkProbe::IsBitcoin => BroadcastReadiness::EndpointIsBitcoin,
+        ForkProbe::NotSyncedToFork { tip } => BroadcastReadiness::EndpointBehind { tip },
+    })
+}
+
 /// Broadcast a verified transaction to a chain proven to be ECX.
 ///
-/// The [`BroadcastPermit`] is the proof, and only [`ecx_chain::ForkProbe::ConfirmedEcx`] can mint
-/// one — so this cannot be called against a Bitcoin endpoint, or against ECX before the chains
-/// diverge. That is a type-level guarantee, not a runtime check.
-pub async fn broadcast(
-    chain: &EsploraChain,
-    tx: &Transaction,
-    permit: &BroadcastPermit,
-) -> Result<Txid, SplitError> {
-    Ok(chain.broadcast(tx, permit).await?)
+/// The probe runs **here**, immediately before publishing, rather than trusting an earlier
+/// answer: the permit is minted and consumed in the same breath. Only
+/// [`ForkProbe::ConfirmedEcx`] can mint one, so this cannot reach a Bitcoin endpoint, or an ECX
+/// endpoint before the chains diverge.
+pub async fn broadcast(chain: &EsploraChain, tx: &Transaction) -> Result<Txid, SplitError> {
+    // Re-assert the transaction's own invariants before publishing. Cheap, and the last chance
+    // to catch a transaction that lost its replay protection somewhere between signing and here.
+    ecx_core::assert_broadcastable(tx)?;
+
+    let probe = ecx_chain::probe_fork(chain).await?;
+    let permit = probe
+        .permit()
+        .ok_or_else(|| SplitError::NotBroadcastable(Box::new(probe)))?;
+
+    Ok(chain.broadcast(tx, &permit).await?)
 }
 
 /// The whole tail of §7: sign, verify, broadcast.
@@ -334,10 +404,14 @@ pub async fn sign_verify_broadcast(
     signer: &dyn Signer,
     psbt: &EcxPsbt,
     intent: &TxIntent,
-    permit: &BroadcastPermit,
 ) -> Result<Txid, SplitError> {
     let tx = sign_and_verify(signer, psbt, intent).await?;
-    broadcast(chain, &tx, permit).await
+    broadcast(chain, &tx).await
+}
+
+/// How deeply buried a broadcast transaction is.
+pub async fn track(chain: &EsploraChain, txid: Txid) -> Result<TxState, SplitError> {
+    Ok(chain.tx_state(txid).await?)
 }
 
 /// A fee this large is a bug, not a preference (§8.6).

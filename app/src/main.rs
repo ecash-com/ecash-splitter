@@ -17,8 +17,8 @@ use gpui_component::{ActiveTheme as _, Root};
 
 use ecx_chain::ChainProfile;
 use state::{
-    BuildOutcome, ChainStatus, DestinationChoice, DestinationOutcome, DiscoveryPhase, Progress,
-    SignOutcome, Stage,
+    BroadcastOutcome, BuildOutcome, ChainStatus, DestinationChoice, DestinationOutcome,
+    DiscoveryPhase, Progress, SignOutcome, Stage,
 };
 
 pub struct SplitterApp {
@@ -485,7 +485,12 @@ impl SplitterApp {
                             built,
                             txid,
                             raw_hex,
+                            readiness: None,
+                            broadcasting: false,
                         };
+                        // Ask whether this endpoint can be broadcast to, so the button explains
+                        // itself rather than simply being greyed out.
+                        this.check_broadcast_readiness(cx);
                     }
                     SignOutcome::Failed(message) => {
                         this.error = Some(message);
@@ -496,6 +501,107 @@ impl SplitterApp {
                         };
                     }
                 }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Run the fork probe so the Signed screen can say whether broadcasting is possible.
+    pub fn check_broadcast_readiness(&mut self, cx: &mut Context<Self>) {
+        let profile = self.profile.clone();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        tasks::rt().spawn(async move {
+            let _ = tx.send(tasks::broadcast_readiness(profile).await);
+        });
+        cx.spawn(async move |this, cx| {
+            let Ok(result) = rx.await else { return };
+            let _ = this.update(cx, |this, cx| {
+                if let Stage::Signed { readiness, .. } = &mut this.stage {
+                    *readiness = result.ok();
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Step 9: publish. The probe runs again inside `ecx_split::broadcast`, so the readiness
+    /// answer shown on screen informs the button without authorising anything.
+    pub fn broadcast(&mut self, cx: &mut Context<Self>) {
+        let Stage::Signed {
+            session,
+            txid,
+            raw_hex,
+            broadcasting,
+            ..
+        } = &mut self.stage
+        else {
+            return;
+        };
+        if *broadcasting {
+            return;
+        }
+        *broadcasting = true;
+        let (session, txid, raw_hex) = (session.clone(), txid.clone(), raw_hex.clone());
+        let profile = self.profile.clone();
+        self.error = None;
+        cx.notify();
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        tasks::rt().spawn(async move {
+            let outcome = match tasks::publish(profile, raw_hex).await {
+                Ok((txid, state)) => BroadcastOutcome::Published { txid, state },
+                Err(message) => BroadcastOutcome::Failed(message),
+            };
+            let _ = tx.send(outcome);
+        });
+
+        let _ = txid;
+        cx.spawn(async move |this, cx| {
+            let Ok(outcome) = rx.await else { return };
+            let _ = this.update(cx, |this, cx| {
+                match outcome {
+                    BroadcastOutcome::Published { txid, state } => {
+                        this.stage = Stage::Broadcast {
+                            session,
+                            txid,
+                            state,
+                        };
+                    }
+                    BroadcastOutcome::Failed(message) => {
+                        // The transaction is still valid, so stay put and stop spinning.
+                        this.error = Some(message);
+                        if let Stage::Signed { broadcasting, .. } = &mut this.stage {
+                            *broadcasting = false;
+                        }
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Re-read how deeply buried the broadcast transaction is.
+    pub fn refresh_depth(&mut self, cx: &mut Context<Self>) {
+        let Stage::Broadcast { session, txid, .. } = &self.stage else {
+            return;
+        };
+        let (session, txid) = (session.clone(), txid.clone());
+        let profile = self.profile.clone();
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        tasks::rt().spawn(async move {
+            let _ = tx.send(tasks::track(profile, txid).await);
+        });
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(state)) = rx.await else { return };
+            let _ = this.update(cx, |this, cx| {
+                if let Stage::Broadcast { state: slot, .. } = &mut this.stage {
+                    *slot = state;
+                }
+                let _ = &session;
                 cx.notify();
             });
         })

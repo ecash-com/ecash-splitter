@@ -376,8 +376,20 @@ pub fn body(app: &SplitterApp, cx: &mut Context<SplitterApp>) -> AnyElement {
             built,
             txid,
             raw_hex,
+            readiness,
+            broadcasting,
             ..
-        } => signed_card(app, account, built, txid, raw_hex, cx),
+        } => signed_card(
+            app,
+            account,
+            built,
+            txid,
+            raw_hex,
+            readiness.as_ref(),
+            *broadcasting,
+            cx,
+        ),
+        Stage::Broadcast { txid, state, .. } => broadcast_card(app, txid, *state, cx),
     }
 }
 
@@ -1377,12 +1389,15 @@ fn review_card(
 }
 
 /// Step 8 — signed and verified. Deliberately not broadcast.
+#[allow(clippy::too_many_arguments)]
 fn signed_card(
     app: &SplitterApp,
     account: &DiscoveredAccount,
     built: &ecx_split::BuiltSweep,
     txid: &str,
     raw_hex: &str,
+    readiness: Option<&ecx_split::BroadcastReadiness>,
+    broadcasting: bool,
     cx: &mut Context<SplitterApp>,
 ) -> AnyElement {
     let profile = app.profile();
@@ -1464,13 +1479,29 @@ fn signed_card(
                                 .child(SharedString::from(raw_hex.to_string())),
                         ),
                 )
-                .child(banner(
-                    cx,
-                    IconName::Info,
-                    cx.theme().info,
-                    "Not broadcast",
-                    "eCash has not activated yet, so no endpoint can pass the fork probe and there is nowhere valid to send this. It is also inert on Bitcoin — the locktime makes it permanently non-final there, and it cannot be altered without invalidating the signature. Keep the hex if you want to broadcast it yourself later.",
-                ))
+                .child(match readiness {
+                    None => banner(
+                        cx,
+                        IconName::Info,
+                        cx.theme().info,
+                        "Checking whether this chain can be published to…",
+                        "The endpoint has to be proven to be eCash and not Bitcoin before anything is broadcast.",
+                    ),
+                    Some(r) if r.is_ready() => banner(
+                        cx,
+                        IconName::CircleCheck,
+                        cx.theme().success,
+                        "This endpoint is proven to be eCash",
+                        "Its block at the fork height differs from Bitcoin's, so this is the fork and not the original chain.",
+                    ),
+                    Some(r) => banner(
+                        cx,
+                        IconName::TriangleAlert,
+                        cx.theme().warning,
+                        "Cannot broadcast yet",
+                        SharedString::from(r.explain().unwrap_or_default()),
+                    ),
+                })
                 .into_any_element(),
         ))
         .child(action_bar(
@@ -1481,9 +1512,18 @@ fn signed_card(
                 .items_center()
                 .gap_3()
                 .child(
+                    Button::new("broadcast")
+                        .primary()
+                        .label(if broadcasting { "Broadcasting…" } else { "Broadcast" })
+                        .loading(broadcasting)
+                        .disabled(broadcasting || !readiness.is_some_and(|r| r.is_ready()))
+                        .on_click(cx.listener(|this, _, _window, cx| this.broadcast(cx))),
+                )
+                .child(
                     Button::new("done")
                         .outline()
                         .label("Back to accounts")
+                        .disabled(broadcasting)
                         .on_click(cx.listener(|this, _, _window, cx| this.back_to_accounts(cx))),
                 )
                 .child(
@@ -1492,13 +1532,170 @@ fn signed_card(
                         .min_w(px(0.0))
                         .text_xs()
                         .text_color(cx.theme().muted_foreground)
-                        .child(SharedString::from(format!(
-                            "Broadcasting becomes possible after block {}.",
-                            thousands(ECASH_HEIGHT)
-                        ))),
+                        .child(SharedString::from(match readiness {
+                            Some(r) if r.is_ready() => {
+                                "Once published this cannot be undone.".to_string()
+                            }
+                            _ => "Keep the hex above — it can be broadcast later.".to_string(),
+                        })),
                 )
                 .into_any_element(),
         ))
+        .into_any_element()
+}
+
+/// Step 9 — published. From here it is only a question of depth.
+fn broadcast_card(
+    app: &SplitterApp,
+    txid: &str,
+    state: ecx_chain::TxState,
+    cx: &mut Context<SplitterApp>,
+) -> AnyElement {
+    let profile = app.profile();
+    let required = ecx_split::MIN_CONFIRMATIONS;
+    let depth = state.confirmations();
+    let deep_enough = state.is_deep_enough(required);
+
+    let (icon, colour, headline, detail) = match state {
+        ecx_chain::TxState::Unknown => (
+            IconName::TriangleAlert,
+            cx.theme().warning,
+            "Not visible yet".to_string(),
+            "The endpoint has not seen it. It may still be propagating — check again in a moment."
+                .to_string(),
+        ),
+        ecx_chain::TxState::InMempool => (
+            IconName::LoaderCircle,
+            cx.theme().info,
+            "In the mempool".to_string(),
+            "Accepted but not yet mined.".to_string(),
+        ),
+        ecx_chain::TxState::Confirmed { height, .. } => (
+            if deep_enough {
+                IconName::CircleCheck
+            } else {
+                IconName::Info
+            },
+            if deep_enough {
+                cx.theme().success
+            } else {
+                cx.theme().info
+            },
+            format!("{depth} confirmation{}", if depth == 1 { "" } else { "s" }),
+            format!("Mined in block {height}."),
+        ),
+    };
+
+    div()
+        .size_full()
+        .flex()
+        .flex_col()
+        .gap_4()
+        .child(section_header("Broadcast", cx))
+        .child(scroll_area(
+            "broadcast",
+            div()
+                .flex()
+                .flex_col()
+                .gap_4()
+                .pr_2()
+                .child(banner(cx, icon, colour, headline, detail))
+                .child(
+                    div()
+                        .p_4()
+                        .rounded_lg()
+                        .border_1()
+                        .border_color(cx.theme().border)
+                        .bg(cx.theme().secondary.opacity(0.3))
+                        .child(field(cx, "txid", txid.to_string()))
+                        .child(field(cx, "endpoint", profile.host().to_string()))
+                        .child(field(
+                            cx,
+                            "confirmations",
+                            format!("{depth} of {required} recommended"),
+                        )),
+                )
+                .children((!deep_enough).then(|| {
+                    banner(
+                        cx,
+                        IconName::TriangleAlert,
+                        cx.theme().warning,
+                        "Not settled yet",
+                        SharedString::from(format!(
+                            "Wait for {required} confirmations. Post-fork difficulty resets to minimum, so early blocks come erratically and reorg risk is higher than on a mature chain."
+                        )),
+                    )
+                }))
+                .child(explorer_link(profile, txid, cx))
+                .into_any_element(),
+        ))
+        .child(action_bar(
+            cx,
+            div()
+                .w_full()
+                .flex()
+                .items_center()
+                .gap_3()
+                .child(
+                    Button::new("refresh-depth")
+                        .primary()
+                        .label("Check again")
+                        .on_click(cx.listener(|this, _, _window, cx| this.refresh_depth(cx))),
+                )
+                .child(
+                    Button::new("done-broadcast")
+                        .outline()
+                        .label("Back to accounts")
+                        .on_click(cx.listener(|this, _, _window, cx| this.back_to_accounts(cx))),
+                )
+                .into_any_element(),
+        ))
+        .into_any_element()
+}
+
+/// Link to the transaction on the chain's explorer.
+///
+/// Deliberately says the link will not resolve yet. The transaction is signed but **not
+/// broadcast**, so the explorer has never seen it — offering a bare link would send the user to a
+/// "not found" page and leave them wondering which half of the app was lying.
+fn explorer_link(profile: &ChainProfile, txid: &str, cx: &mut Context<SplitterApp>) -> AnyElement {
+    let url = profile.tx_url(txid);
+    let for_click = url.clone();
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .p_3()
+        .rounded_lg()
+        .border_1()
+        .border_color(cx.theme().border)
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap_3()
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("View on the explorer"),
+                )
+                .child(
+                    Button::new("explorer")
+                        .outline()
+                        .xsmall()
+                        .label("Open")
+                        .on_click(move |_, _window, cx| cx.open_url(&for_click)),
+                ),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(cx.theme().link)
+                .child(SharedString::from(url)),
+        )
         .into_any_element()
 }
 
@@ -1582,57 +1779,5 @@ fn depth_controls(app: &SplitterApp, cx: &mut Context<SplitterApp>) -> AnyElemen
                 }))
                 .into_any_element(),
         ))
-        .into_any_element()
-}
-
-/// Link to the transaction on the chain's explorer.
-///
-/// Deliberately says the link will not resolve yet. The transaction is signed but **not
-/// broadcast**, so the explorer has never seen it — offering a bare link would send the user to a
-/// "not found" page and leave them wondering which half of the app was lying.
-fn explorer_link(profile: &ChainProfile, txid: &str, cx: &mut Context<SplitterApp>) -> AnyElement {
-    let url = profile.tx_url(txid);
-    let for_click = url.clone();
-
-    div()
-        .flex()
-        .flex_col()
-        .gap_1()
-        .p_3()
-        .rounded_lg()
-        .border_1()
-        .border_color(cx.theme().border)
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .justify_between()
-                .gap_3()
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(cx.theme().muted_foreground)
-                        .child("View on the explorer"),
-                )
-                .child(
-                    Button::new("explorer")
-                        .outline()
-                        .xsmall()
-                        .label("Open")
-                        .on_click(move |_, _window, cx| cx.open_url(&for_click)),
-                ),
-        )
-        .child(
-            div()
-                .text_xs()
-                .text_color(cx.theme().link)
-                .child(SharedString::from(url)),
-        )
-        .child(
-            div()
-                .text_xs()
-                .text_color(cx.theme().muted_foreground)
-                .child("Nothing will be there yet — this transaction has not been broadcast."),
-        )
         .into_any_element()
 }

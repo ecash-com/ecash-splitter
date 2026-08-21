@@ -171,3 +171,42 @@ pub async fn sign_reviewed(
         bitcoin::consensus::encode::serialize_hex(&tx),
     ))
 }
+
+/// Ask whether this endpoint may be broadcast to. Runs the fork probe.
+pub async fn broadcast_readiness(
+    profile: ChainProfile,
+) -> Result<ecx_split::BroadcastReadiness, String> {
+    let chain = EsploraChain::new(profile).map_err(|e| e.to_string())?;
+    ecx_split::broadcast_readiness(&chain)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Publish a signed transaction, then read back where it stands.
+///
+/// `ecx_split::broadcast` runs the fork probe again immediately before publishing, so the
+/// readiness check the UI made earlier informs the button but does not authorise anything.
+pub async fn publish(
+    profile: ChainProfile,
+    raw_hex: String,
+) -> Result<(String, ecx_chain::TxState), String> {
+    let tx: bitcoin::Transaction = bitcoin::consensus::encode::deserialize_hex(raw_hex.trim())
+        .map_err(|e| format!("not a valid transaction: {e}"))?;
+    let chain = EsploraChain::new(profile).map_err(|e| e.to_string())?;
+    let txid = ecx_split::broadcast(&chain, &tx)
+        .await
+        .map_err(|e| e.to_string())?;
+    let state = ecx_split::track(&chain, txid)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok((txid.to_string(), state))
+}
+
+/// Re-read how deeply buried a broadcast transaction is.
+pub async fn track(profile: ChainProfile, txid: String) -> Result<ecx_chain::TxState, String> {
+    let txid: bitcoin::Txid = txid.parse().map_err(|_| "invalid txid".to_string())?;
+    let chain = EsploraChain::new(profile).map_err(|e| e.to_string())?;
+    ecx_split::track(&chain, txid)
+        .await
+        .map_err(|e| e.to_string())
+}
