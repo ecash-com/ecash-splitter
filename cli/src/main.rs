@@ -24,9 +24,10 @@ COMMANDS:
     discover                    Find accounts with history on the connected device
     build --account <PATH> --to <ADDRESS>
                                 Build the sweep PSBT for one account and print it
-    sign --account <PATH> --to <ADDRESS>
+    sign --to <ADDRESS> [--account <PATH>]
                                 Build, show the PSBT, confirm, sign on the device, and
-                                verify the result. Does NOT broadcast.
+                                verify the result. Prompts for the account unless
+                                --account is given. Does NOT broadcast.
 
 OPTIONS:
     --endpoint <URL>            Esplora base URL (default: the ECX alpha preset)
@@ -107,6 +108,84 @@ fn find_account<'a>(
         .iter()
         .find(|a| a.candidate.path.to_string() == wanted)
         .ok_or_else(|| format!("no discovered account at {path}"))
+}
+
+fn print_accounts(accounts: &[ecx_wallet::DiscoveredAccount], numbered: bool) {
+    if numbered {
+        println!(
+            "{:<4} {:<16} {:<14} {:>14}  UTXOS",
+            "#", "TYPE", "PATH", "BALANCE"
+        );
+    } else {
+        println!("{:<16} {:<14} {:>14}  UTXOS", "TYPE", "PATH", "BALANCE");
+    }
+    for (i, a) in accounts.iter().enumerate() {
+        let row = format!(
+            "{:<16} {:<14} {:>14}  {}",
+            a.candidate.kind.label(),
+            a.candidate.path.to_string(),
+            a.balance.to_string(),
+            a.utxo_count
+        );
+        if numbered {
+            // Accounts with history but nothing to spend are listed and marked, not hidden --
+            // "we looked here and found nothing left" is information.
+            let marker = if a.is_splittable() {
+                format!("{:<4}", i + 1)
+            } else {
+                "  - ".into()
+            };
+            println!("{marker} {row}");
+        } else {
+            println!("{row}");
+        }
+    }
+}
+
+/// Pick an account interactively, so the user does not have to run `discover` first and copy a
+/// path back in — which would mean reading twelve xpubs and scanning twelve accounts twice.
+fn choose_account(
+    accounts: &[ecx_wallet::DiscoveredAccount],
+) -> Result<&ecx_wallet::DiscoveredAccount, String> {
+    use std::io::{Write, stdin, stdout};
+
+    let splittable: Vec<usize> = accounts
+        .iter()
+        .enumerate()
+        .filter(|(_, a)| a.is_splittable())
+        .map(|(i, _)| i)
+        .collect();
+
+    if splittable.is_empty() {
+        return Err("no account has anything to spend".into());
+    }
+
+    println!();
+    print_accounts(accounts, true);
+    println!();
+
+    if splittable.len() == 1 {
+        let only = &accounts[splittable[0]];
+        println!("Only one account has coins: {}", only.label());
+        return Ok(only);
+    }
+
+    print!("Which account? [1-{}]: ", accounts.len());
+    stdout().flush().map_err(|e| e.to_string())?;
+    let mut answer = String::new();
+    stdin().read_line(&mut answer).map_err(|e| e.to_string())?;
+
+    let n: usize = answer
+        .trim()
+        .parse()
+        .map_err(|_| "expected a number from the # column".to_string())?;
+    let account = accounts
+        .get(n.wrapping_sub(1))
+        .ok_or_else(|| format!("there is no account {n}"))?;
+    if !account.is_splittable() {
+        return Err(format!("{} has nothing left to spend", account.label()));
+    }
+    Ok(account)
 }
 
 fn print_summary(account: &ecx_wallet::DiscoveredAccount, s: &ecx_wallet::SweepSummary) {
@@ -194,16 +273,7 @@ async fn run(command: &str, args: &[String]) -> Result<(), String> {
                 println!("no accounts with history");
                 return Ok(());
             }
-            println!("{:<16} {:<14} {:>14}  UTXOS", "TYPE", "PATH", "BALANCE");
-            for a in &accounts {
-                println!(
-                    "{:<16} {:<14} {:>14}  {}",
-                    a.candidate.kind.label(),
-                    a.candidate.path.to_string(),
-                    a.balance.to_string(),
-                    a.utxo_count
-                );
-            }
+            print_accounts(&accounts, false);
             Ok(())
         }
 
@@ -264,7 +334,6 @@ async fn run(command: &str, args: &[String]) -> Result<(), String> {
         }
 
         "sign" => {
-            let path = flag(args, "--account").ok_or("sign needs --account <PATH>")?;
             let to = flag(args, "--to").ok_or("sign needs --to <ADDRESS>")?;
             let feerate: u64 = flag(args, "--feerate")
                 .as_deref()
@@ -280,7 +349,12 @@ async fn run(command: &str, args: &[String]) -> Result<(), String> {
             let (identity, accounts) = discover(&chain, signer.as_ref(), label, render)
                 .await
                 .map_err(|e| e.to_string())?;
-            let account = find_account(&accounts, &path)?;
+            // --account skips the prompt; without it, pick from the accounts we just scanned
+            // rather than making the user run `discover` and repeat the whole sweep.
+            let account = match flag(args, "--account") {
+                Some(path) => find_account(&accounts, &path)?,
+                None => choose_account(&accounts)?,
+            };
 
             let destination = Destination::Pasted {
                 address,
