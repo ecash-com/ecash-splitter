@@ -268,8 +268,12 @@ in QR mode — six devices, no vendor libraries.
 | **Linux** | ❌ Never built or run. Needs udev rules per vendor for HID and serial access |
 | **Windows** | ❌ Never built or run. Needs WinUSB/HID driver verification per device |
 
-Packaging (`cargo-packager` → `.dmg` / `.msi` / AppImage), code signing, and notarization are all
-unstarted. See §11 — the signing burden is the real cost, not the code.
+Packaging, code signing, and notarization are all unstarted — see
+[`signing-and-notarization.md`](signing-and-notarization.md) for what each platform requires.
+Two findings worth knowing early: macOS appears to need **no USB entitlement** (Liana ships
+notarized with hardened runtime and nothing else), and Windows now requires **HSM-backed keys**
+for every certificate, which makes Azure Trusted Signing at $9.99/month the obvious route if
+eligible.
 
 ---
 
