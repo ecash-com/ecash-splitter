@@ -72,6 +72,21 @@ impl LedgerSigner {
         let ledger = ledger.display_xpub(false).map_err(map_hwi)?;
         Ok(Self { inner: ledger })
     }
+
+    /// Connect with the wallet policy Ledger needs in order to sign.
+    ///
+    /// Without one, `sign_tx` fails with `UnimplementedMethod` — the device will not sign a
+    /// transaction whose spending conditions it has not been told. `policy` is a descriptor in
+    /// multipath form, e.g. `wpkh([73c5da0a/84'/0'/0']xpub.../**)`.
+    ///
+    /// The empty name marks it a *default* policy, which Ledger accepts without registration.
+    /// A non-standard policy would need `register_wallet` and its returned HMAC persisted.
+    pub fn connect_with_policy(policy: &str) -> Result<Self, SignerError> {
+        let ledger = Ledger::<TransportHID>::try_connect_hid().map_err(map_hwi)?;
+        let ledger = ledger.display_xpub(false).map_err(map_hwi)?;
+        let ledger = ledger.with_wallet("", policy, None).map_err(map_hwi)?;
+        Ok(Self { inner: ledger })
+    }
 }
 
 #[async_trait::async_trait]

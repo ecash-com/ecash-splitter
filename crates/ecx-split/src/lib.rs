@@ -207,14 +207,27 @@ pub async fn device_destination(signer: &dyn Signer) -> Result<Destination, Spli
     })
 }
 
-/// Build the sweep and summarize it for review. Stops short of signing.
-pub async fn build_sweep(
+/// A built sweep, with everything the signing step needs kept together.
+///
+/// The `intent` matters as much as the PSBT. `verify_signed` compares the device's output
+/// against what the **user confirmed** — so the intent must be derived here, from the PSBT that
+/// was actually displayed, and carried forward. Re-deriving it later from the returned bytes
+/// would compare a transaction against itself and turn the check into theatre.
+#[derive(Debug, Clone)]
+pub struct BuiltSweep {
+    pub psbt: EcxPsbt,
+    pub intent: TxIntent,
+    pub summary: SweepSummary,
+}
+
+/// Build the sweep, keeping the PSBT and its intent alongside the summary.
+pub async fn build_sweep_full(
     chain: &EsploraChain,
     account: &DiscoveredAccount,
     destination: &Destination,
     fingerprint: Fingerprint,
     feerate_sat_per_vb: u64,
-) -> Result<SweepSummary, SplitError> {
+) -> Result<BuiltSweep, SplitError> {
     if !destination.is_confirmed() {
         return Err(SplitError::DestinationUnconfirmed);
     }
@@ -227,11 +240,28 @@ pub async fn build_sweep(
         feerate_sat_per_vb,
     )
     .await?;
-    Ok(ecx_wallet::summarize(
-        &psbt,
-        destination.address(),
-        fingerprint,
-    )?)
+    let intent = psbt.intent()?;
+    let summary = ecx_wallet::summarize(&psbt, destination.address(), fingerprint)?;
+    Ok(BuiltSweep {
+        psbt,
+        intent,
+        summary,
+    })
+}
+
+/// Build the sweep and summarize it for review. Stops short of signing.
+pub async fn build_sweep(
+    chain: &EsploraChain,
+    account: &DiscoveredAccount,
+    destination: &Destination,
+    fingerprint: Fingerprint,
+    feerate_sat_per_vb: u64,
+) -> Result<SweepSummary, SplitError> {
+    Ok(
+        build_sweep_full(chain, account, destination, fingerprint, feerate_sat_per_vb)
+            .await?
+            .summary,
+    )
 }
 
 /// Turn whatever the device produced into a transaction.

@@ -12,7 +12,7 @@ Key: ✅ works · 🟡 implemented, untested on hardware · ⛔ deliberately exc
 | | |
 |---|---|
 | **Frontends** | Desktop (GPUI) ✅ · CLI (`ecx`) ✅ — both share `ecx-split`, neither owns the flow |
-| **Flow** | Connect → discover → select → destination → build PSBT → review ✅ · signing and broadcast ❌ |
+| **Flow** | Connect → discover → select → destination → build → review ✅ · **sign + verify ✅ in the CLI**, ❌ in the GUI · broadcast ❌ |
 | **Devices** | USB: Ledger ✅ · Coldcard 🟡 · Specter 🟡 · Jade 🟡 · Trezor 🟡 · BitBox02 ❌<br>Air-gap: **parked** — library exists, no UI |
 | **Chain** | Esplora ✅ · Electrum ❌ · compact-filter SPV ⛔ |
 | **Tests** | 52, all passing. 19 of them are the `ecx-core` invariant suite |
@@ -124,7 +124,7 @@ fallback preset.
 | 4. Select account | ✅ |
 | 5. Destination | ✅ Pasted (default, behind a typed acknowledgement) or device-derived at `m/84'/0'/1'` |
 | 6. Build + review | ✅ Sweep PSBT, full breakdown, unsigned PSBT shown and copyable |
-| 7. Sign | 🟡 `sign_and_verify` implemented in `ecx-split`; the UI button stays **deliberately disabled** until the fork activates |
+| 7. Sign | 🟡 `ecx sign` does it end to end; the GUI button stays **deliberately disabled**. Untested on hardware |
 | 8. Verify signed bytes | ✅ Called by `ecx_split::sign_and_verify`, on both device shapes. `resolve_signed` finalizes a PSBT or takes Trezor's transaction as-is |
 | 9. Broadcast | 🟡 `ecx_split::broadcast` implemented and requires a `BroadcastPermit`, which no probe can mint until the chains diverge. No UI |
 | 10. Wait for depth | ❌ Not built. `MIN_CONFIRMATIONS = 30` is a placeholder pending real alpha block times |
@@ -242,9 +242,11 @@ unstarted. See §11 — the signing burden is the real cost, not the code.
 
 ## Suggested order
 
-1. **UI for the air-gap loop** — the export/import functions exist and are tested; what is
-   missing is a save dialog, a paste field, and a "verify and broadcast" step in both frontends
-2. **BitBox02** — small, self-contained; the last USB device
+1. **Run `ecx sign` against a real device** — signing has never executed on any hardware. This
+   is the last untested link in the chain, and the Ledger wallet-policy path in particular is
+   unproven
+2. **GUI parity** — the desktop app still stops at review
+3. **BitBox02** — small, self-contained; the last USB device
 4. **`display_address`** via Ledger wallet policies — makes device-derived destinations
    verifiable, at which point the §7.5 default should be revisited
 5. **Linux and Windows** — required before anyone but us can run this

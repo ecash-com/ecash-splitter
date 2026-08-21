@@ -203,6 +203,27 @@ async fn tokio_blocking(
     Ok(Box::new(signer))
 }
 
+/// Connect for **signing**, supplying the wallet policy devices that need one require.
+///
+/// Ledger refuses to sign without a policy, and it must be set at construction. Every other
+/// backend ignores the argument, so callers do not have to branch on device kind.
+pub async fn connect_for_signing(
+    kind: DeviceKind,
+    policy: &str,
+) -> Result<Box<dyn Signer>, SignerError> {
+    match kind {
+        DeviceKind::Ledger => {
+            let policy = policy.to_owned();
+            let signer =
+                tokio::task::spawn_blocking(move || LedgerSigner::connect_with_policy(&policy))
+                    .await
+                    .map_err(|e| SignerError::Transport(e.to_string()))??;
+            Ok(Box::new(signer))
+        }
+        other => connect(other).await,
+    }
+}
+
 /// Connect to whatever is attached, preferring the first device found.
 pub async fn connect_any() -> Result<Box<dyn Signer>, SignerError> {
     let devices = enumerate().await?;

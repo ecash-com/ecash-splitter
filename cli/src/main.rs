@@ -10,7 +10,7 @@ use std::process::ExitCode;
 
 use bitcoin::{Address, address::NetworkUnchecked};
 use ecx_chain::{ChainProfile, EsploraChain, ScanReadiness};
-use ecx_split::{Destination, SplitEvent, build_sweep, discover};
+use ecx_split::{Destination, SplitEvent, build_sweep, build_sweep_full, discover, resolve_signed};
 
 const USAGE: &str = "\
 ecx — split BTC to ECX from a hardware wallet
@@ -24,15 +24,25 @@ COMMANDS:
     discover                    Find accounts with history on the connected device
     build --account <PATH> --to <ADDRESS>
                                 Build the sweep PSBT for one account and print it
+    sign --account <PATH> --to <ADDRESS>
+                                Build, show the PSBT, confirm, sign on the device, and
+                                verify the result. Does NOT broadcast.
 
 OPTIONS:
     --endpoint <URL>            Esplora base URL (default: the ECX alpha preset)
-    --feerate <SAT_PER_VB>      Fee rate for `build` (default: 1)
+    --feerate <SAT_PER_VB>      Fee rate for `build`/`sign` (default: 1)
+    --psbt-out <FILE>           Also write the unsigned PSBT here, to inspect elsewhere
+    --yes                       Skip the confirmation prompt (scripting only)
     -h, --help                  Show this help
 
-Signing and broadcasting are not implemented: eCash has not activated, so no endpoint can pass
-the fork probe and a signed transaction would have nowhere valid to go.
+`sign` stops after verifying the device's output. Broadcasting is not implemented: eCash has not
+activated, so no endpoint can pass the fork probe and a signed transaction would have nowhere
+valid to go.
 ";
+
+fn has(args: &[String], name: &str) -> bool {
+    args.iter().any(|a| a == name)
+}
 
 fn flag(args: &[String], name: &str) -> Option<String> {
     let i = args.iter().position(|a| a == name)?;
@@ -79,6 +89,54 @@ async fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn parse_address(text: &str) -> Result<Address, String> {
+    text.parse::<Address<NetworkUnchecked>>()
+        .map_err(|_| format!("{text:?} is not a valid address"))?
+        .require_network(bitcoin::Network::Bitcoin)
+        .map_err(|_| "address is not a Bitcoin mainnet address".to_string())
+}
+
+fn find_account<'a>(
+    accounts: &'a [ecx_wallet::DiscoveredAccount],
+    path: &str,
+) -> Result<&'a ecx_wallet::DiscoveredAccount, String> {
+    let wanted = path.trim().trim_start_matches("m/");
+    accounts
+        .iter()
+        .find(|a| a.candidate.path.to_string() == wanted)
+        .ok_or_else(|| format!("no discovered account at {path}"))
+}
+
+fn print_summary(account: &ecx_wallet::DiscoveredAccount, s: &ecx_wallet::SweepSummary) {
+    println!("from        : {}", account.label());
+    println!("to          : {}", s.destination);
+    println!("inputs      : {}", s.input_count);
+    println!("total in    : {}", s.total_in);
+    println!("sending     : {}", s.sending);
+    println!("fee         : {}", s.fee);
+    println!("nLockTime   : {}", s.locktime);
+    println!(
+        "prev txs    : {}",
+        if s.has_prev_txs { "present" } else { "MISSING" }
+    );
+}
+
+/// Typed confirmation. Not a y/n — this spends every UTXO in an account.
+fn confirm(summary: &ecx_wallet::SweepSummary) -> Result<bool, String> {
+    use std::io::{Write, stdin, stdout};
+    println!();
+    println!(
+        "This sweeps {} to {} on eCash.",
+        summary.sending, summary.destination
+    );
+    println!("Your device will display \"Bitcoin\" — it has no way not to.");
+    print!("Type 'sign' to continue: ");
+    stdout().flush().map_err(|e| e.to_string())?;
+    let mut answer = String::new();
+    stdin().read_line(&mut answer).map_err(|e| e.to_string())?;
+    Ok(answer.trim() == "sign")
 }
 
 async fn run(command: &str, args: &[String]) -> Result<(), String> {
@@ -158,11 +216,7 @@ async fn run(command: &str, args: &[String]) -> Result<(), String> {
                 .parse()
                 .map_err(|_| "--feerate must be a whole number of sat/vB")?;
 
-            let address = to
-                .parse::<Address<NetworkUnchecked>>()
-                .map_err(|_| format!("{to:?} is not a valid address"))?
-                .require_network(bitcoin::Network::Bitcoin)
-                .map_err(|_| "address is not a Bitcoin mainnet address".to_string())?;
+            let address = parse_address(&to)?;
 
             let chain = EsploraChain::new(profile(args)).map_err(|e| e.to_string())?;
             let signer = ecx_signer::connect_any().await.map_err(|e| e.to_string())?;
@@ -171,10 +225,7 @@ async fn run(command: &str, args: &[String]) -> Result<(), String> {
                 .await
                 .map_err(|e| e.to_string())?;
 
-            let account = accounts
-                .iter()
-                .find(|a| a.candidate.path.to_string() == path.trim_start_matches("m/"))
-                .ok_or_else(|| format!("no discovered account at {path}"))?;
+            let account = find_account(&accounts, &path)?;
 
             // The CLI has no way to show a typed acknowledgement, so require it explicitly.
             let destination = Destination::Pasted {
@@ -207,6 +258,83 @@ async fn run(command: &str, args: &[String]) -> Result<(), String> {
             println!();
             println!(
                 "Not signed. eCash has not activated at block {}.",
+                ecx_core::ECASH_HEIGHT
+            );
+            Ok(())
+        }
+
+        "sign" => {
+            let path = flag(args, "--account").ok_or("sign needs --account <PATH>")?;
+            let to = flag(args, "--to").ok_or("sign needs --to <ADDRESS>")?;
+            let feerate: u64 = flag(args, "--feerate")
+                .as_deref()
+                .unwrap_or("1")
+                .parse()
+                .map_err(|_| "--feerate must be a whole number of sat/vB")?;
+            let address = parse_address(&to)?;
+
+            let chain = EsploraChain::new(profile(args)).map_err(|e| e.to_string())?;
+            let signer = ecx_signer::connect_any().await.map_err(|e| e.to_string())?;
+            let kind = signer.kind();
+            let label = format!("{kind:?}");
+            let (identity, accounts) = discover(&chain, signer.as_ref(), label, render)
+                .await
+                .map_err(|e| e.to_string())?;
+            let account = find_account(&accounts, &path)?;
+
+            let destination = Destination::Pasted {
+                address,
+                acknowledged: true,
+            };
+            let built =
+                build_sweep_full(&chain, account, &destination, identity.fingerprint, feerate)
+                    .await
+                    .map_err(|e| e.to_string())?;
+
+            println!();
+            print_summary(account, &built.summary);
+            println!();
+            println!("{}", built.summary.psbt_base64);
+
+            if let Some(file) = flag(args, "--psbt-out") {
+                std::fs::write(&file, ecx_signer::airgap::export_bytes(&built.psbt))
+                    .map_err(|e| format!("could not write {file}: {e}"))?;
+                println!();
+                println!("unsigned PSBT written to {file}");
+            }
+
+            // Golden Rule 7 — nothing reaches the device without explicit confirmation.
+            if !has(args, "--yes") && !confirm(&built.summary)? {
+                println!("aborted; nothing was sent to the device");
+                return Ok(());
+            }
+
+            // Ledger will not sign without its wallet policy, so reconnect carrying one. Every
+            // other backend ignores it.
+            println!();
+            println!("confirm on your device…");
+            let signing = ecx_signer::connect_for_signing(kind, &account.ledger_policy())
+                .await
+                .map_err(|e| e.to_string())?;
+
+            let signed = signing.sign(&built.psbt).await.map_err(|e| e.to_string())?;
+            let tx = resolve_signed(signed).map_err(|e| e.to_string())?;
+
+            // Golden Rule 3 — the device's output is untrusted. Compare it against the intent
+            // derived from the PSBT shown above, never one recomputed from these bytes.
+            ecx_core::verify_signed(&tx, &built.intent)
+                .map_err(|e| format!("VERIFICATION FAILED — not broadcasting: {e}"))?;
+
+            println!();
+            println!("verified against the reviewed transaction.");
+            println!("txid        : {}", tx.compute_txid());
+            println!("nLockTime   : {}", tx.lock_time.to_consensus_u32());
+            println!();
+            println!("{}", bitcoin::consensus::encode::serialize_hex(&tx));
+            println!();
+            println!(
+                "NOT broadcast. eCash has not activated at block {}, so no endpoint can pass the \n\
+                 fork probe. Keep this hex if you want to broadcast it yourself later.",
                 ecx_core::ECASH_HEIGHT
             );
             Ok(())

@@ -153,6 +153,19 @@ impl DiscoveredAccount {
     pub fn is_splittable(&self) -> bool {
         self.balance > Amount::ZERO
     }
+
+    /// The Ledger wallet policy for this account.
+    ///
+    /// Ledger refuses to sign without one — `async-hwi`'s `sign_tx` returns `UnimplementedMethod`
+    /// when no policy is set. A policy is the descriptor in *multipath* form, `/**` rather than a
+    /// separate receive and change branch, which is what BIP-388 expects.
+    ///
+    /// For a standard single-sig account this is a **default** policy: Ledger accepts it with an
+    /// empty name and no registration HMAC. Anything non-standard would need `register_wallet`
+    /// first (§12).
+    pub fn ledger_policy(&self) -> String {
+        self.descriptor.replace("/0/*", "/**")
+    }
 }
 
 #[cfg(test)]
