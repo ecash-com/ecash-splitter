@@ -89,6 +89,14 @@ pub enum SplitError {
     Signer(#[from] ecx_signer::SignerError),
     #[error("wallet: {0}")]
     Wallet(#[from] ecx_wallet::WalletError),
+    #[error("import: {0}")]
+    Import(#[from] ecx_wallet::ImportError),
+    #[error(
+        "the exported accounts do not all share one master fingerprint — they came from \
+         different seeds or different passphrases, and scanning them together would show a \
+         blend of wallets"
+    )]
+    MixedFingerprints,
     #[error("build: {0}")]
     Build(#[from] ecx_wallet::BuildError),
     #[error("invariant: {0}")]
@@ -154,6 +162,38 @@ pub async fn discover(
     .await?;
 
     Ok((identity, accounts))
+}
+
+/// Discover accounts from an **air-gapped** export, with no device attached.
+///
+/// The USB [`discover`] asks the device for twelve candidate xpubs. Air-gapped there is nothing
+/// to ask, so the device exports its account keys first and we scan whatever it gave us. That is
+/// why the air-gap flow has three hops rather than one: keys out, PSBT out, signature back.
+///
+/// Coverage differs, and the caller should say so. Over USB we probe four script types across
+/// three account indices; an export typically carries account 0 for each script type — four of
+/// the twelve. Anything the device did not export is invisible to us, so an empty result here
+/// means "nothing in what you exported", not "nothing in your wallet".
+pub async fn discover_from_export(
+    chain: &EsploraChain,
+    accounts: &[ecx_wallet::ImportedAccount],
+    mut on_event: impl FnMut(SplitEvent),
+) -> Result<(Fingerprint, Vec<DiscoveredAccount>), SplitError> {
+    let fingerprint =
+        ecx_wallet::import::common_fingerprint(accounts).ok_or(SplitError::MixedFingerprints)?;
+
+    let xpubs = ecx_wallet::import::to_candidates(accounts);
+    let (_, readiness) = chain_status(chain).await?;
+    let found = scan_accounts(chain, readiness, fingerprint, &xpubs, |p| {
+        on_event(SplitEvent::Scanning {
+            done: p.scanned,
+            total: p.total,
+            label: format!("{} {}", p.current.kind.label(), p.current.path),
+        });
+    })
+    .await?;
+
+    Ok((fingerprint, found))
 }
 
 /// Derive the ECX destination from the device: a fresh account, never used on Bitcoin (§7.2).

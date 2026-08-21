@@ -13,6 +13,7 @@ bitcoin.workspace = true
 bdk_wallet.workspace = true
 bdk_esplora.workspace = true
 miniscript.workspace = true
+serde_json.workspace = true
 esplora-client.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

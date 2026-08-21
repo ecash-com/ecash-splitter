@@ -13,9 +13,9 @@ Key: ✅ works · 🟡 implemented, untested on hardware · ⛔ deliberately exc
 |---|---|
 | **Frontends** | Desktop (GPUI) ✅ · CLI (`ecx`) ✅ — both share `ecx-split`, neither owns the flow |
 | **Flow** | Connect → discover → select → destination → build PSBT → review ✅ · signing and broadcast ❌ |
-| **Devices** | USB: Ledger ✅ · Coldcard 🟡 · Specter 🟡 · Jade 🟡 · Trezor 🟡 · BitBox02 ❌<br>Air-gap: file/paste 🟡 · QR ❌ |
+| **Devices** | USB: Ledger ✅ · Coldcard 🟡 · Specter 🟡 · Jade 🟡 · Trezor 🟡 · BitBox02 ❌<br>Air-gap: **parked** — library exists, no UI |
 | **Chain** | Esplora ✅ · Electrum ❌ · compact-filter SPV ⛔ |
-| **Tests** | 46, all passing. 19 of them are the `ecx-core` invariant suite |
+| **Tests** | 52, all passing. 19 of them are the `ecx-core` invariant suite |
 | **Frontend parity** | Both frontends stop at review; neither can sign |
 
 The app **stops before signing on purpose**: eCash activates at block 963,648 and until then the
@@ -146,7 +146,32 @@ fallback preset.
 
 ---
 
-## The air-gapped path
+## The air-gapped path — **parked (2026-08-21)**
+
+> Not currently scoped. The library functions below exist and are tested, but nothing in either
+> frontend reaches them, so this costs nothing at runtime and blocks nothing. Delete
+> `ecx_signer::airgap`, `ecx_wallet::import`, and `ecx_split::discover_from_export` if it should
+> go entirely — everything else they touch is shared with the USB path.
+
+### Why it is bigger than it looks
+
+**Discovery needs xpubs, and xpubs come from the device.** Over USB we ask for the twelve
+candidates. Air-gapped there is nothing to ask, so the keys have to cross the gap first — before
+any scan, and therefore before any PSBT can exist, since the amounts come from the scan. That
+makes it three hops, not one:
+
+```
+1. device exports account xpubs   → import, build watch-only descriptors
+2. scan chain, pick account + destination, build PSBT → export
+   ── device signs, offline ──
+3. import signed PSBT → verify → broadcast
+```
+
+Coverage is also narrower than USB: an export typically carries account 0 for each script type,
+four of our twelve candidates. Anything not exported is invisible, so an empty result means
+"nothing in what you exported", not "nothing in your wallet". Any UI must say that.
+
+### What exists
 
 **Export is cheap; import is the constrained half.** Our screen or a file reaches the device for
 free. Getting the signed result *back* is where the cost is, and only one of the three routes
