@@ -222,6 +222,21 @@ pub async fn sign_and_verify(
     Ok(tx)
 }
 
+/// Verify a signature that came back from an **air-gapped** device.
+///
+/// The USB path has [`sign_and_verify`], which owns the whole sequence. Air-gap has no signer to
+/// call — the bytes arrive from a file or a paste — so this is its equivalent, and it exists so
+/// that path cannot be composed without the check. Both routes end at the same
+/// `ecx_core::verify_signed`; there is no shorter way to a broadcastable transaction.
+///
+/// `intent` must be the one derived from the PSBT the user actually confirmed, not one recomputed
+/// from the returned bytes — otherwise the comparison is a transaction against itself.
+pub fn verify_imported(signed: SignedTx, intent: &TxIntent) -> Result<Transaction, SplitError> {
+    let tx = resolve_signed(signed)?;
+    ecx_core::verify_signed(&tx, intent)?;
+    Ok(tx)
+}
+
 /// Broadcast a verified transaction to a chain proven to be ECX.
 ///
 /// The [`BroadcastPermit`] is the proof, and only [`ecx_chain::ForkProbe::ConfirmedEcx`] can mint
@@ -321,6 +336,56 @@ mod tests {
         };
         let psbt = bitcoin::Psbt::from_unsigned_tx(unsigned).unwrap();
         assert!(resolve_signed(SignedTx::Psbt(Box::new(psbt))).is_err());
+    }
+
+    #[test]
+    fn an_imported_signature_is_verified_against_the_confirmed_intent() {
+        use bitcoin::{Amount, OutPoint, ScriptBuf, Sequence, TxIn, TxOut, Witness};
+        use bitcoin::{absolute::LockTime, transaction::Version};
+
+        let spk = |b: u8| ScriptBuf::from_bytes([vec![0x00, 0x14], vec![b; 20]].concat());
+        let prev = Transaction {
+            version: Version::TWO,
+            lock_time: LockTime::ZERO,
+            input: vec![],
+            output: vec![TxOut {
+                value: Amount::from_sat(100_000),
+                script_pubkey: spk(0xaa),
+            }],
+        };
+        let outpoint = OutPoint {
+            txid: prev.compute_txid(),
+            vout: 0,
+        };
+        let tx = Transaction {
+            version: Version::TWO,
+            lock_time: LockTime::from_consensus(ecx_core::ECX_MAGIC_LOCKTIME),
+            input: vec![TxIn {
+                previous_output: outpoint,
+                script_sig: ScriptBuf::new(),
+                sequence: Sequence(0xFFFF_FFFD),
+                witness: Witness::new(),
+            }],
+            output: vec![TxOut {
+                value: Amount::from_sat(99_000),
+                script_pubkey: spk(0xbb),
+            }],
+        };
+
+        let intent = TxIntent {
+            inputs: [(outpoint, prev.output[0].clone())].into_iter().collect(),
+            outputs: tx.output.clone(),
+            fee: Amount::from_sat(1_000),
+        };
+
+        // Matching bytes verify.
+        assert!(verify_imported(SignedTx::Transaction(Box::new(tx.clone())), &intent).is_ok());
+
+        // A file swapped for one paying somewhere else must not get through, which is the whole
+        // reason the air-gap path routes through here rather than straight to broadcast.
+        let mut tampered = tx;
+        tampered.output[0].script_pubkey = spk(0xee);
+        assert!(verify_imported(SignedTx::Transaction(Box::new(tampered)), &intent).is_err());
     }
 
     #[tokio::test]

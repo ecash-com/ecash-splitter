@@ -15,7 +15,7 @@ Key: ✅ works · 🟡 implemented, untested on hardware · ⛔ deliberately exc
 | **Flow** | Connect → discover → select → destination → build PSBT → review ✅ · signing and broadcast ❌ |
 | **Devices** | USB: Ledger ✅ · Coldcard 🟡 · Specter 🟡 · Jade 🟡 · Trezor 🟡 · BitBox02 ❌<br>Air-gap: file/paste 🟡 · QR ❌ |
 | **Chain** | Esplora ✅ · Electrum ❌ · compact-filter SPV ⛔ |
-| **Tests** | 45, all passing. 19 of them are the `ecx-core` invariant suite |
+| **Tests** | 46, all passing. 19 of them are the `ecx-core` invariant suite |
 | **Frontend parity** | Both frontends stop at review; neither can sign |
 
 The app **stops before signing on purpose**: eCash activates at block 963,648 and until then the
@@ -159,8 +159,9 @@ needs a camera:
 | **Scan** — read the device's animated QR directly | SeedSigner, Keystone, Jade-QR | **yes** | ❌ Not built |
 
 `import_text` and `import_bytes` accept a binary PSBT, a base64 PSBT, or a hex transaction, and
-tolerate wrapped/whitespaced paste. Both land on `SignedTx`, so an air-gapped signature goes
-through exactly the same `verify_signed` check as a USB one.
+tolerate wrapped/whitespaced paste. Both land on `SignedTx`, and `ecx_split::verify_imported` is
+the air-gap counterpart to `sign_and_verify` — it exists so the path cannot be composed without
+the check. Both routes end at the same `ecx_core::verify_signed`.
 
 **The return leg is not optional.** If the signed transaction never comes back to us,
 `verify_signed` never runs and we never broadcast — and re-checking the device's bytes against
