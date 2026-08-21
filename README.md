@@ -101,6 +101,15 @@ Dependencies point one way: `app`/`cli` → `ecx-split` → `{ecx-wallet, ecx-si
 Read [`CLAUDE.md`](CLAUDE.md) before changing anything — the golden rules, the verified ECX
 consensus facts, and the decisions already settled.
 
+## Icons
+
+`app_icon.png` is the 1024×1024 source. [`assets/`](assets/) holds the generated `.icns`, `.ico`,
+and Linux PNG set, plus `generate.py` to rebuild them. macOS gets a rounded, padded variant
+because it does not auto-mask app icons — see [`assets/README.md`](assets/README.md).
+
+Not wired up yet: there is no `.app` bundle or installer, so nothing displays these. That lands
+with packaging (see [`docs/signing-and-notarization.md`](docs/signing-and-notarization.md)).
+
 ## Licence
 
 MIT.
