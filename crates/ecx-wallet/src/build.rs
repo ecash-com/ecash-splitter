@@ -39,6 +39,8 @@ pub enum BuildError {
     Invariant(#[from] InvariantError),
     #[error("chain is not caught up, so the UTXO set cannot be trusted")]
     NotSynced,
+    #[error("{0}")]
+    Finalize(String),
 }
 
 /// Re-scan the account and build its sweep.
@@ -170,4 +172,27 @@ pub fn summarize(
         psbt_base64: inner.to_string(),
         has_prev_txs,
     })
+}
+
+/// Finalize a PSBT the device filled with signatures, and extract the transaction.
+///
+/// Most devices return signatures inside the PSBT rather than a finished transaction, so the
+/// scripts still have to be assembled. Miniscript does that; `extract_tx` then requires every
+/// input to be finalized, which is a useful check in itself — a partially-signed PSBT fails here
+/// rather than producing a transaction that would be rejected by the network.
+pub fn finalize_and_extract(mut psbt: Psbt) -> Result<bitcoin::Transaction, BuildError> {
+    use miniscript::psbt::PsbtExt;
+
+    let secp = Secp256k1::verification_only();
+    psbt.finalize_mut(&secp).map_err(|errors| {
+        let detail = errors
+            .iter()
+            .map(|e| e.to_string())
+            .collect::<Vec<_>>()
+            .join("; ");
+        BuildError::Finalize(format!("could not finalize the signed PSBT: {detail}"))
+    })?;
+
+    psbt.extract_tx()
+        .map_err(|e| BuildError::Finalize(format!("could not extract the transaction: {e}")))
 }

@@ -20,6 +20,9 @@ license = "MIT"
 [workspace.dependencies]
 bitcoin = "0.32"
 bdk_wallet = "3.1.0"
+# Must track bdk_wallet's requirement (^12.3.5). Pulling 13 gives two miniscript versions and
+# type errors that look like nonsense — see CLAUDE.md §4.
+miniscript = "12.3.5"
 bdk_esplora = { version = "0.22.2", default-features = false, features = ["async-https-rustls", "tokio"] }
 esplora-client = { version = "0.12.3", default-features = false, features = ["async-https-rustls", "tokio"] }
 futures = "0.3"

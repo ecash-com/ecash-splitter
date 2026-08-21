@@ -12,6 +12,7 @@ use bitcoin::{
 };
 use ecx_core::EcxPsbt;
 
+pub mod airgap;
 pub mod coldcard;
 pub mod jade;
 pub mod ledger;
@@ -78,6 +79,9 @@ pub enum SignerError {
 
     #[error("{what} is not supported on this device yet")]
     Unsupported { what: String },
+
+    #[error("air-gap: {0}")]
+    AirGap(String),
 
     /// Jade's unlock relays an encrypted handshake to Blockstream's blind PIN oracle. The most
     /// common cause of failure is simply having no route to it.

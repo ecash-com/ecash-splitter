@@ -1819,6 +1819,7 @@ dependencies = [
  "ecx-chain",
  "ecx-core",
  "esplora-client",
+ "miniscript",
  "thiserror 2.0.20",
  "tracing",
 ]

@@ -1,6 +1,6 @@
 # Support status
 
-What works today, what does not, and what each missing piece needs. Written 2026-08-21, updated after adding Trezor; check
+What works today, what does not, and what each missing piece needs. Written 2026-08-21, updated after adding Trezor and the air-gap import; check
 `git log` before trusting it. Section references are to [`CLAUDE.md`](../CLAUDE.md).
 
 Key: ✅ works · 🟡 implemented, untested on hardware · ⛔ deliberately excluded · ❌ not built
@@ -13,9 +13,9 @@ Key: ✅ works · 🟡 implemented, untested on hardware · ⛔ deliberately exc
 |---|---|
 | **Frontends** | Desktop (GPUI) ✅ · CLI (`ecx`) ✅ — both share `ecx-split`, neither owns the flow |
 | **Flow** | Connect → discover → select → destination → build PSBT → review ✅ · signing and broadcast ❌ |
-| **Devices** | Ledger ✅ · Coldcard 🟡 · Specter 🟡 · Jade 🟡 · Trezor 🟡 · BitBox02 ❌ |
+| **Devices** | USB: Ledger ✅ · Coldcard 🟡 · Specter 🟡 · Jade 🟡 · Trezor 🟡 · BitBox02 ❌<br>Air-gap: file/paste 🟡 · QR ❌ |
 | **Chain** | Esplora ✅ · Electrum ❌ · compact-filter SPV ⛔ |
-| **Tests** | 37, all passing. 19 of them are the `ecx-core` invariant suite |
+| **Tests** | 45, all passing. 19 of them are the `ecx-core` invariant suite |
 | **Frontend parity** | Both frontends stop at review; neither can sign |
 
 The app **stops before signing on purpose**: eCash activates at block 963,648 and until then the
@@ -52,7 +52,7 @@ user who unlocked in the Blockstream app never triggers a request.
 |---|---|---|---|
 | **BitBox02** | Connecting is a pairing handshake, not a `connect()` | `PairingBitbox02::connect` → display `pairing_code()` → user confirms on device → `wait_confirm()`. A new UI step in both frontends | ~1–2 hours |
 | **Trezor Model One** | ⛔ Deliberate. It cannot take a PIN or passphrase on-device, so supporting it would put both in this app's memory, against Golden Rule 1. No SD card or camera either, so no air-gap fallback | Nothing — holders are directed to `../ecash-electrum` | n/a |
-| **Air-gapped** (SeedSigner, Passport, Krux, Keystone, Coldcard Q, Jade via QR) | Not built | See below | ~1 hour (file) / days (QR) |
+| **Air-gapped by QR** (SeedSigner, Keystone, Jade-QR) | Not built | Animated QR display, camera capture, `ur` decode. See below | ~1 day |
 
 ### Trezor specifics
 
@@ -124,9 +124,9 @@ fallback preset.
 | 4. Select account | ✅ |
 | 5. Destination | ✅ Pasted (default, behind a typed acknowledgement) or device-derived at `m/84'/0'/1'` |
 | 6. Build + review | ✅ Sweep PSBT, full breakdown, unsigned PSBT shown and copyable |
-| 7. Sign | ❌ **Deliberately disabled** until the fork activates |
-| 8. Verify signed bytes | 🟡 `verify_signed` is implemented and covered by 19 tests, but **nothing calls it yet** — it is wired in at `ecx_split::sign_and_broadcast`, which is `todo!()` |
-| 9. Broadcast | ❌ No UI. `ChainSource::broadcast` exists and requires a `BroadcastPermit` |
+| 7. Sign | 🟡 `sign_and_verify` implemented in `ecx-split`; the UI button stays **deliberately disabled** until the fork activates |
+| 8. Verify signed bytes | ✅ Called by `ecx_split::sign_and_verify`, on both device shapes. `resolve_signed` finalizes a PSBT or takes Trezor's transaction as-is |
+| 9. Broadcast | 🟡 `ecx_split::broadcast` implemented and requires a `BroadcastPermit`, which no probe can mint until the chains diverge. No UI |
 | 10. Wait for depth | ❌ Not built. `MIN_CONFIRMATIONS = 30` is a placeholder pending real alpha block times |
 | 11. Hand off descriptor | ❌ Not built |
 
@@ -148,22 +148,58 @@ fallback preset.
 
 ## The air-gapped path
 
-Not built. The shape:
+**Export is cheap; import is the constrained half.** Our screen or a file reaches the device for
+free. Getting the signed result *back* is where the cost is, and only one of the three routes
+needs a camera:
 
-1. App builds the unsigned PSBT — **already works**, shown and copyable on the review screen
-2. **Export** — `.psbt` file, or an animated QR
-3. Device signs, fully offline
-4. **Import** — file back, or scan the device's QR
-5. `verify_signed` → broadcast
+| Route | Devices | Camera | State |
+|---|---|---|---|
+| **File** — device writes a signed PSBT to SD | Coldcard, Passport, Krux | no | 🟡 Implemented in `ecx_signer::airgap`, no UI yet |
+| **Paste** — signed PSBT (base64) or raw transaction (hex) as text | anything | no | 🟡 Implemented, no UI yet |
+| **Scan** — read the device's animated QR directly | SeedSigner, Keystone, Jade-QR | **yes** | ❌ Not built |
 
-Two transports with very different costs:
+`import_text` and `import_bytes` accept a binary PSBT, a base64 PSBT, or a hex transaction, and
+tolerate wrapped/whitespaced paste. Both land on `SignedTx`, so an air-gapped signature goes
+through exactly the same `verify_signed` check as a USB one.
 
-- **File** (~1 hour) — covers Coldcard SD mode and Passport. No help for Jade or SeedSigner,
-  which have no card slot.
-- **QR** (days) — animated QR encoding, camera capture, and `ur:psbt` decoding. Covers
-  *everything*: Jade, SeedSigner, Passport, Krux, Keystone, Coldcard Q. No vendor library at all.
+**The return leg is not optional.** If the signed transaction never comes back to us,
+`verify_signed` never runs and we never broadcast — and re-checking the device's bytes against
+what the user confirmed is the last thing between a bug and their BTC (Golden Rule 3). A split
+finished in another tool is a split with that check missing.
 
----
+### SeedSigner specifically
+
+SeedSigner has **no USB data path** — it is a Pi Zero where USB is power only, and everything
+goes through its camera and screen. So it needs the QR round trip.
+
+It is usable today without a camera, but awkwardly: we can display the PSBT for it to scan (once
+QR export exists), and it displays the signed PSBT as animated QR, which you would need something
+else — Sparrow with a webcam, a phone UR scanner — to turn into text you can paste back. That
+works and keeps verification with us, but it is a hop.
+
+### What the QR path needs
+
+All crates exist and are maintained:
+
+| Crate | Version | Role |
+|---|---|---|
+| `ur` | 0.5.2 | Fountain-encoded multi-part UR — the fiddly part, already solved |
+| `qrcode` | 0.14.1 | Encode frames for display |
+| `rqrr` | 0.10.1 | Detect and decode QR from captured frames |
+| `nokhwa` | 0.10.11 | Cross-platform webcam capture |
+
+Split by cost:
+
+- **Export** (~2–3 hours, no new permissions) — encode as `ur:crypto-psbt`, animate frames on the
+  review screen. Verify whether SeedSigner requires that exact type string or accepts `ur:bytes`;
+  the `ur` crate's `bytewords` and `fountain` modules are public if the label needs setting by hand.
+- **Import** (~1 day, **needs the camera**) — `NSCameraUsageDescription`, a hardened-runtime
+  entitlement, and a macOS permission prompt. That is a real change to the app's capability
+  profile and its notarization story, for a tool whose pitch is that it touches nothing it does
+  not need to. Worth a deliberate decision.
+
+Leverage is high: the same work covers SeedSigner, Keystone, Passport, Krux, Coldcard Q, and Jade
+in QR mode — six devices, no vendor libraries.
 
 ## Platforms
 
@@ -180,12 +216,9 @@ unstarted. See §11 — the signing burden is the real cost, not the code.
 
 ## Suggested order
 
-1. **Sign → verify → broadcast** — `verify_signed` has nineteen tests and no callers, which is
-   the biggest gap between what is tested and what runs. Wiring it means resolving `SignedTx`:
-   finalize-and-extract for PSBT devices, take-as-is for Trezor. Blocked on the fork for the
-   broadcast half, but the rest can be built and tested now
-2. **Air-gap by file** — cheapest broad win, and it is the same export the QR path will need
-3. **BitBox02** — small, self-contained; the last USB device
+1. **UI for the air-gap loop** — the export/import functions exist and are tested; what is
+   missing is a save dialog, a paste field, and a "verify and broadcast" step in both frontends
+2. **BitBox02** — small, self-contained; the last USB device
 4. **`display_address`** via Ledger wallet policies — makes device-derived destinations
    verifiable, at which point the §7.5 default should be revisited
 5. **Linux and Windows** — required before anyone but us can run this

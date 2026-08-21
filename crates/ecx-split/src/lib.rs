@@ -8,9 +8,10 @@
 //! Golden Rule 6: the ECX sweep happens first, always. Replay protection is one-directional, and
 //! split ordering is what protects the other direction — it is not an optimization.
 
-use bitcoin::{Address, Amount, Txid, bip32::Fingerprint};
-use ecx_chain::{ChainSource, EsploraChain, ScanReadiness, TipInfo, now_unix};
-use ecx_signer::{DeviceKind, Signer};
+use bitcoin::{Address, Amount, Transaction, Txid, bip32::Fingerprint};
+use ecx_chain::{BroadcastPermit, ChainSource, EsploraChain, ScanReadiness, TipInfo, now_unix};
+use ecx_core::{EcxPsbt, TxIntent};
+use ecx_signer::{DeviceKind, SignedTx, Signer};
 use ecx_wallet::{
     AccountCandidate, DEFAULT_ACCOUNTS_PROBED, DiscoveredAccount, SweepSummary, candidates,
     discover as scan_accounts,
@@ -193,16 +194,57 @@ pub async fn build_sweep(
     )?)
 }
 
-/// Sign, re-verify, and broadcast.
+/// Turn whatever the device produced into a transaction.
 ///
-/// Not reachable yet: the fork has not activated, so no endpoint can pass the probe and mint a
-/// [`ecx_chain::BroadcastPermit`]. Wired here so the sequence lives in one place when it is.
-pub async fn sign_and_broadcast(
-    _chain: &EsploraChain,
-    _signer: &dyn Signer,
-    _summary: &SweepSummary,
+/// Devices differ: most fill signatures into the PSBT and it still needs finalizing, while
+/// Trezor streams back a finished transaction. `SignedTx` keeps that difference honest; this is
+/// where the two paths converge.
+pub fn resolve_signed(signed: SignedTx) -> Result<Transaction, SplitError> {
+    match signed {
+        SignedTx::Psbt(psbt) => Ok(ecx_wallet::build::finalize_and_extract(*psbt)?),
+        SignedTx::Transaction(tx) => Ok(*tx),
+    }
+}
+
+/// Sign on the device, then **re-verify the bytes it returned** before anything else happens.
+///
+/// Golden Rule 3: the device's output is untrusted. `verify_signed` re-checks the locktime, every
+/// input's sequence, every outpoint, and every output against the intent the user actually
+/// confirmed. A mismatch aborts here, with nothing broadcast.
+pub async fn sign_and_verify(
+    signer: &dyn Signer,
+    psbt: &EcxPsbt,
+    intent: &TxIntent,
+) -> Result<Transaction, SplitError> {
+    let signed = signer.sign(psbt).await?;
+    let tx = resolve_signed(signed)?;
+    ecx_core::verify_signed(&tx, intent)?;
+    Ok(tx)
+}
+
+/// Broadcast a verified transaction to a chain proven to be ECX.
+///
+/// The [`BroadcastPermit`] is the proof, and only [`ecx_chain::ForkProbe::ConfirmedEcx`] can mint
+/// one — so this cannot be called against a Bitcoin endpoint, or against ECX before the chains
+/// diverge. That is a type-level guarantee, not a runtime check.
+pub async fn broadcast(
+    chain: &EsploraChain,
+    tx: &Transaction,
+    permit: &BroadcastPermit,
 ) -> Result<Txid, SplitError> {
-    todo!("sign via ecx-signer, verify_signed via ecx-core, broadcast with a BroadcastPermit")
+    Ok(chain.broadcast(tx, permit).await?)
+}
+
+/// The whole tail of §7: sign, verify, broadcast.
+pub async fn sign_verify_broadcast(
+    chain: &EsploraChain,
+    signer: &dyn Signer,
+    psbt: &EcxPsbt,
+    intent: &TxIntent,
+    permit: &BroadcastPermit,
+) -> Result<Txid, SplitError> {
+    let tx = sign_and_verify(signer, psbt, intent).await?;
+    broadcast(chain, &tx, permit).await
 }
 
 /// A fee this large is a bug, not a preference (§8.6).
@@ -246,6 +288,39 @@ mod tests {
             }
             .is_confirmed()
         );
+    }
+
+    #[test]
+    fn a_device_supplied_transaction_passes_straight_through() {
+        // Trezor's shape: already finished, nothing to finalize.
+        let tx = Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: bitcoin::absolute::LockTime::from_consensus(499_999_999),
+            input: vec![],
+            output: vec![],
+        };
+        let resolved = resolve_signed(SignedTx::Transaction(Box::new(tx.clone()))).unwrap();
+        assert_eq!(resolved, tx);
+    }
+
+    #[test]
+    fn an_unsigned_psbt_fails_to_finalize_rather_than_producing_a_transaction() {
+        // The other shape, with no signatures in it. This must be an error: silently extracting
+        // an unfinalized transaction would produce something the network rejects, after we had
+        // already told the user it was signed.
+        let unsigned = Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: bitcoin::absolute::LockTime::from_consensus(499_999_999),
+            input: vec![bitcoin::TxIn {
+                previous_output: bitcoin::OutPoint::null(),
+                script_sig: bitcoin::ScriptBuf::new(),
+                sequence: bitcoin::Sequence(0xFFFF_FFFD),
+                witness: bitcoin::Witness::new(),
+            }],
+            output: vec![],
+        };
+        let psbt = bitcoin::Psbt::from_unsigned_tx(unsigned).unwrap();
+        assert!(resolve_signed(SignedTx::Psbt(Box::new(psbt))).is_err());
     }
 
     #[tokio::test]
