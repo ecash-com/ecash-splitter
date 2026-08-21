@@ -203,9 +203,9 @@ pub enum DestinationOutcome {
 }
 
 /// What the profile banner should say, if anything.
-pub fn profile_notice(profile: ChainProfile) -> Option<&'static str> {
+pub fn profile_notice(profile: &ChainProfile) -> Option<&'static str> {
     match profile.kind {
-        ProfileKind::Ecx => None,
+        ProfileKind::Ecx | ProfileKind::Custom => None,
         ProfileKind::BitcoinReadOnly => Some(
             "Discovery only. This endpoint is Bitcoin, so the fork probe can never clear it \
              and broadcasting from here is impossible by construction.",

@@ -20,14 +20,14 @@ use crate::state::{ChainStatus, DestinationChoice, DiscoveryPhase, Stage, profil
 
 /// Ticker for the selected chain. Small thing, but showing "BTC" while scanning Bitcoin and
 /// "ECX" while scanning ECX removes a real source of confusion (§10).
-fn unit(profile: ChainProfile) -> &'static str {
+fn unit(profile: &ChainProfile) -> &'static str {
     match profile.kind {
-        ProfileKind::Ecx => "ECX",
+        ProfileKind::Ecx | ProfileKind::Custom => "ECX",
         ProfileKind::BitcoinReadOnly => "BTC",
     }
 }
 
-fn amount(value: Amount, profile: ChainProfile) -> String {
+fn amount(value: Amount, profile: &ChainProfile) -> String {
     format!("{:.8} {}", value.to_btc(), unit(profile))
 }
 
@@ -58,8 +58,7 @@ fn thousands(n: u32) -> String {
 // ---------------------------------------------------------------------------
 
 pub fn header(app: &SplitterApp, cx: &mut Context<SplitterApp>) -> AnyElement {
-    let profile = app.profile();
-    let active = profile;
+    let active = app.profile();
 
     div()
         .flex()
@@ -110,20 +109,48 @@ pub fn header(app: &SplitterApp, cx: &mut Context<SplitterApp>) -> AnyElement {
                         .into_any_element()
                 })),
         )
-        .child(div().flex().items_center().gap_2().children(
-            ChainProfile::ALL.into_iter().enumerate().map(|(i, p)| {
-                let selected = p == active;
-                let mut button = Button::new(("profile", i)).label(p.name).small();
-                button = if selected {
-                    button.primary()
-                } else {
-                    button.outline()
-                };
-                button
-                    .on_click(cx.listener(move |this, _, _window, cx| this.set_profile(p, cx)))
-                    .into_any_element()
-            }),
-        ))
+        .child(
+            div()
+                .w_full()
+                .flex()
+                .items_center()
+                .gap_2()
+                .children(
+                    ChainProfile::presets()
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, p)| {
+                            let selected = p == *active;
+                            let button =
+                                Button::new(("preset", i)).label(p.name.to_string()).small();
+                            let button = if selected {
+                                button.primary()
+                            } else {
+                                button.outline()
+                            };
+                            button
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.set_profile(p.clone(), window, cx)
+                                }))
+                                .into_any_element()
+                        }),
+                )
+                // These hosts move every phase (§6), so the URL is editable rather than a fixed
+                // menu. Anything typed here is still gated by the fork probe before broadcast.
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .child(gpui_component::input::Input::new(app.endpoint_input()).small()),
+                )
+                .child(
+                    Button::new("use-endpoint")
+                        .outline()
+                        .small()
+                        .label("Use")
+                        .on_click(cx.listener(|this, _, _window, cx| this.use_typed_endpoint(cx))),
+                ),
+        )
         .into_any_element()
 }
 
@@ -703,6 +730,7 @@ fn accounts_view(
         .child(action_bar(
             cx,
             div()
+                .w_full()
                 .flex()
                 .items_center()
                 .gap_3()
@@ -733,7 +761,7 @@ fn account_row(
     account: &DiscoveredAccount,
     index: usize,
     selected: bool,
-    profile: ChainProfile,
+    profile: &ChainProfile,
     cx: &mut Context<SplitterApp>,
 ) -> AnyElement {
     let border = if selected {
@@ -889,7 +917,14 @@ fn field(cx: &App, label: &str, value: impl Into<SharedString>) -> AnyElement {
                 .flex_shrink_0()
                 .child(SharedString::from(label.to_string())),
         )
-        .child(div().flex_1().min_w(px(0.0)).text_sm().child(value.into()))
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.0))
+                .text_sm()
+                .text_right()
+                .child(value.into()),
+        )
         .into_any_element()
 }
 
@@ -929,10 +964,12 @@ fn scroll_area(id: &'static str, content: AnyElement) -> AnyElement {
 
 /// Actions pinned below the scroll region, so a primary button is never hidden off-screen.
 fn action_bar(cx: &App, content: AnyElement) -> AnyElement {
+    // Deliberately NOT a flex row. A flex child sizes to its content and will happily overflow
+    // the viewport; a block wrapper forces the row inside to the bar's own width, which is what
+    // lets explanatory text beside a button wrap instead of running off the edge.
     div()
-        .flex()
-        .items_center()
-        .gap_3()
+        .w_full()
+        .flex_shrink_0()
         .pt_4()
         .mt_2()
         .border_t_1()
@@ -987,6 +1024,7 @@ fn destination_card(
         .child(action_bar(
             cx,
             div()
+                .w_full()
                 .flex()
                 .items_center()
                 .gap_3()
@@ -1295,6 +1333,7 @@ fn review_card(
         .child(action_bar(
             cx,
             div()
+                .w_full()
                 .flex()
                 .items_center()
                 .gap_3()

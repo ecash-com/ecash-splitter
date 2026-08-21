@@ -28,6 +28,8 @@ pub struct SplitterApp {
     error: Option<String>,
     /// Text field for a pasted destination address.
     address_input: Entity<gpui_component::input::InputState>,
+    /// Editable Esplora endpoint. These hosts move every phase, so a fixed menu is not enough.
+    endpoint_input: Entity<gpui_component::input::InputState>,
 }
 
 impl SplitterApp {
@@ -36,20 +38,30 @@ impl SplitterApp {
             gpui_component::input::InputState::new(window, cx)
                 .placeholder("bc1… — an ECX address you control")
         });
+        let default_profile = ChainProfile::ecx_alpha();
+        let endpoint_input = cx.new(|cx| {
+            gpui_component::input::InputState::new(window, cx)
+                .placeholder("https://host/api")
+                .default_value(default_profile.esplora_url.to_string())
+        });
         let mut this = Self {
-            profile: ChainProfile::ECX_ALPHA,
+            profile: default_profile,
             chain: ChainStatus::Unknown,
             stage: Stage::NeedsDevice,
             error: None,
             address_input,
+            endpoint_input,
         };
         // Kick off the first tip read so the header is honest immediately.
         this.refresh_tip(cx);
         this
     }
 
-    pub fn profile(&self) -> ChainProfile {
-        self.profile
+    pub fn profile(&self) -> &ChainProfile {
+        &self.profile
+    }
+    pub fn endpoint_input(&self) -> &Entity<gpui_component::input::InputState> {
+        &self.endpoint_input
     }
     pub fn chain(&self) -> &ChainStatus {
         &self.chain
@@ -66,10 +78,19 @@ impl SplitterApp {
 
     // -- actions ----------------------------------------------------------
 
-    pub fn set_profile(&mut self, profile: ChainProfile, cx: &mut Context<Self>) {
+    pub fn set_profile(
+        &mut self,
+        profile: ChainProfile,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.profile == profile {
             return;
         }
+        // Keep the endpoint field showing whatever the app is actually pointed at.
+        let url = profile.esplora_url.to_string();
+        self.endpoint_input
+            .update(cx, |state, cx| state.set_value(url, window, cx));
         self.profile = profile;
         self.chain = ChainStatus::Unknown;
         // Results from another chain must not linger.
@@ -82,9 +103,33 @@ impl SplitterApp {
         cx.notify();
     }
 
+    /// Point the app at whatever URL is in the endpoint field.
+    pub fn use_typed_endpoint(&mut self, cx: &mut Context<Self>) {
+        let url = self.endpoint_input.read(cx).value().trim().to_string();
+        if url.is_empty() {
+            return;
+        }
+        let profile = ChainProfile::custom(&url);
+        if profile == self.profile {
+            // Same endpoint — treat the button as a retry.
+            self.refresh_tip(cx);
+            return;
+        }
+        self.profile = profile;
+        self.chain = ChainStatus::Unknown;
+        self.error = None;
+        if matches!(self.stage, Stage::Accounts { .. }) {
+            if let Some(session) = self.stage.session().cloned() {
+                self.stage = Stage::Connected(session);
+            }
+        }
+        self.refresh_tip(cx);
+        cx.notify();
+    }
+
     pub fn refresh_tip(&mut self, cx: &mut Context<Self>) {
         self.chain = ChainStatus::Checking;
-        let profile = self.profile;
+        let profile = self.profile.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
         tasks::rt().spawn(async move {
             let _ = tx.send(tasks::chain_tip(profile).await);
@@ -129,7 +174,7 @@ impl SplitterApp {
 
     pub fn discover(&mut self, cx: &mut Context<Self>) {
         self.error = None;
-        let profile = self.profile;
+        let profile = self.profile.clone();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Progress>();
 
         tasks::rt().spawn(async move { tasks::run_discovery(profile, tx).await });
@@ -321,7 +366,7 @@ impl SplitterApp {
             return;
         };
         let (session, account) = (session.clone(), account.clone());
-        let profile = self.profile;
+        let profile = self.profile.clone();
         let fingerprint = session.fingerprint;
 
         self.error = None;
