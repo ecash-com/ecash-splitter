@@ -10,10 +10,12 @@ use bitcoin::bip32::{DerivationPath, Fingerprint, Xpub};
 use ecx_core::EcxPsbt;
 
 pub mod coldcard;
+pub mod jade;
 pub mod ledger;
 pub mod specter;
 
 pub use coldcard::ColdcardSigner;
+pub use jade::JadeSigner;
 pub use ledger::LedgerSigner;
 pub use specter::SpecterSigner;
 
@@ -72,10 +74,13 @@ pub enum SignerError {
     #[error("{what} is not supported on this device yet")]
     Unsupported { what: String },
 
+    /// Jade's unlock relays an encrypted handshake to Blockstream's blind PIN oracle. The most
+    /// common cause of failure is simply having no route to it.
     #[error(
-        "device unlock needs network access, which this app does not permit (CLAUDE.md Golden Rule 8)"
+        "Jade unlock failed: {0} — unlocking relays an encrypted handshake to Blockstream's \
+         blind PIN oracle, so this needs a working internet connection"
     )]
-    UnlockNeedsNetwork,
+    JadeUnlock(String),
 }
 
 /// What a device must do. Mirrors `async-hwi`'s `HWI` trait so wrapping it is mechanical.
@@ -127,6 +132,10 @@ pub async fn enumerate() -> Result<Vec<DeviceInfo>, SignerError> {
         Ok(devices) => found.extend(devices),
         Err(e) => tracing::debug!(error = %e, "specter enumeration failed"),
     }
+    match jade::enumerate().await {
+        Ok(devices) => found.extend(devices),
+        Err(e) => tracing::debug!(error = %e, "jade enumeration failed"),
+    }
 
     Ok(found)
 }
@@ -143,9 +152,7 @@ pub async fn connect(kind: DeviceKind) -> Result<Box<dyn Signer>, SignerError> {
         DeviceKind::BitBox02 => Err(SignerError::Unsupported {
             what: "BitBox02 (needs the pairing-code confirmation flow)".into(),
         }),
-        DeviceKind::Jade => Err(SignerError::Unsupported {
-            what: "Jade over USB (its PIN unlock requires network access)".into(),
-        }),
+        DeviceKind::Jade => Ok(Box::new(JadeSigner::connect().await?)),
         DeviceKind::AirGap => Err(SignerError::Unsupported {
             what: "air-gapped signing (export the PSBT instead)".into(),
         }),

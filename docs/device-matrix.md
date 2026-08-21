@@ -25,7 +25,7 @@ build a sweep through `finalize_ecx_psbt` and record:
 | 9 | `verify_signed` passes on the returned bytes | Golden Rule 3 — re-verified, not trusted |
 | 10 | Passphrase wallet: fingerprint changes, descriptor rebuilt | §5.4 |
 | 11 | **PIN is entered on-device** (not via a host prompt) | Golden Rule 1. A device that demands host entry is unsupported — this is why Trezor Model One is out (§5.5) |
-| 12 | **Does unlock require network access?** | Jade's PIN unlock talks to Blockstream's pinserver — collides with Golden Rule 8. If it cannot unlock offline, Jade is air-gap-only in v1 |
+| 12 | **Does unlock require network access?** | Jade relays to Blockstream's blind oracle — required by its security model, and a documented Golden Rule 8 carve-out. Verify it works behind a proxy / on a restricted network |
 | 13 | **Passphrase is entered on-device** | Same rule. Verify `ApplySettings` on-device-only can be honoured; host-cleartext `PassphraseAck` is a fail |
 | 14 | Time for 12 sequential `get_extended_pubkey` calls, no display | Sets the discovery progress UX (§5.6). Confirm no button press is required per xpub |
 
@@ -54,7 +54,7 @@ Then broadcast to ECX and confirm the transaction is **accepted as final by ECX 
 | Trezor Model T / Safe 3 / Safe 5 | on-device | — | on-device | — | |
 | BitBox02 | on-device | — | on-device | — | Pairing code confirmation on first connect |
 | Coldcard (USB) | on-device | — | on-device | — | |
-| **Jade** | on-device | **CONFIRM** | on-device | — | PIN unlock uses Blockstream's pinserver — see check 12 |
+| **Jade** | on-device | **needs internet** | on-device | — | Unlock relays to the blind PIN oracle; `auth()` is a no-op if already unlocked |
 
 ### Air-gap path (PSBT file / QR)
 

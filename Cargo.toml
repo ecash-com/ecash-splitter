@@ -23,11 +23,12 @@ bdk_wallet = "3.1.0"
 bdk_esplora = { version = "0.22.2", default-features = false, features = ["async-https-rustls", "tokio"] }
 esplora-client = { version = "0.12.3", default-features = false, features = ["async-https-rustls", "tokio"] }
 futures = "0.3"
-# `jade` pulls reqwest, because Jade's PIN unlock talks to Blockstream's pinserver over the
-# network — confirming the open question in CLAUDE.md §5.5. That collides with Golden Rule 8, so
-# Jade is USB-unsupported; its holders use the air-gap path. `service` (a remote signing service)
-# is excluded for the same reason. Everything else is local transport only.
-async-hwi = { version = "0.0.32", default-features = false, features = ["ledger", "coldcard", "specter"] }
+# `jade` pulls reqwest, and that is correct rather than a smell: Jade has no secure element, so
+# a *blind* oracle provides its anti-brute-force guarantee, and unlocking relays an encrypted
+# handshake between device and oracle. The host is a dumb pipe — it never learns the PIN or any
+# key. `service` (a remote signing service) stays excluded; that one really is the app phoning
+# out on the signing path.
+async-hwi = { version = "0.0.32", default-features = false, features = ["ledger", "coldcard", "specter", "jade"] }
 trezor-client = { version = "0.1.6", features = ["bitcoin"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 async-trait = "0.1"

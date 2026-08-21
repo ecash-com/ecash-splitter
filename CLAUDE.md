@@ -79,6 +79,11 @@ build it), Lightning, sidechain deposits, fiat, address book, mobile. See §12.
    device, no partial broadcast. Every failure surfaces the actual cause and the safe next step.
 8. **The UI layer performs no I/O.** No network, no device, no filesystem beyond app config —
    all of it goes through the `ecx-*` crates behind channels, and the app ships no telemetry.
+   **One carve-out, added 2026-08-21:** unlocking a Jade relays an encrypted handshake to
+   Blockstream's blind PIN oracle. That is Jade's security model, not our choice — it has no
+   secure element, so the oracle is what makes a short PIN resistant to physical extraction. The
+   oracle never learns the PIN or any key, and the host is a relay rather than a participant.
+   The rule forbids *the app* reaching out; it does not forbid a device protocol from doing so.
    With GPUI this is structural — there is no WebView and no HTML surface, so there is no CSP to
    get wrong and no remote-asset risk. **Do not undo it by embedding a webview** for a help page,
    a changelog, or anything else. See §4 and §10.
@@ -406,9 +411,13 @@ register_wallet(name, policy) -> Option<[u8; 32]>   // Ledger only in v1
   Supporting it means owning both, for the one device that can do neither.
   **Handle `PinMatrixRequest` as an explicit "unsupported device" error** naming the model — never
   by building a matrix.
-- **Jade — PIN unlock talks to Blockstream's pinserver over the network.** That collides with
-  Golden Rule 8. **CONFIRM** whether `async-hwi`'s Jade path can unlock offline; if it cannot,
-  Jade is air-gap-only in v1.
+- **Jade — unlock relays to Blockstream's blind PIN oracle over HTTPS.** CONFIRMED 2026-08-21 by
+  reading `async-hwi`'s `jade::pinserver`: `auth()` receives a `PinServerRequired { http_request }`
+  from the device, forwards it, and passes the response back. This is **required, not optional** —
+  Jade has no secure element and the oracle is its anti-brute-force guarantee. The oracle is
+  blind and the host is a pipe. **Jade is supported over USB**; see the Golden Rule 8 carve-out.
+  `auth()` is a no-op on an already-unlocked device, so a user who unlocked in the Blockstream
+  app never triggers a request.
 - **Passphrase entry is on-device on every supported model**, so no passphrase transits host
   memory either. Model One would have `PassphraseAck`'d it to us in cleartext, since it cannot
   take text input and cannot satisfy `ApplySettings`' on-device-only enforcement — the second
