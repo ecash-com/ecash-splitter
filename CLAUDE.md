@@ -359,8 +359,11 @@ All on `bitcoin 0.32`:
   from Blockbook; we must supply them as **`non_witness_utxo` in the PSBT**, sourced from our own
   ECX indexer. Concretely: the chain source must be able to serve raw transactions, and
   **never call `TxBuilder::only_witness_utxo()`**. Taproot inputs are exempt.
-- **Ledger requires a wallet policy.** Standard single-sig on a standard path (`wpkh(@0/**)`,
-  BIP84) is a *default* policy and signs with no registration. Anything else must be registered
+- **Ledger requires a wallet policy.** CONFIRMED 2026-08-21 on a Nano X (app 2.5.0):
+  `wpkh([fingerprint/84'/0'/2']xpub.../**)` with an **empty name** is accepted as a *default*
+  policy and signs with no registration and no HMAC. Note `async-hwi` refuses outright without
+  one — `sign_tx` returns `UnimplementedMethod` — and the policy can only be set at construction,
+  so signing needs its own connection once the account is known. Anything else must be registered
   first via `register_wallet`, and the returned HMAC persisted — otherwise every signature
   re-prompts. v1 stays on default policies for this reason.
 - **Coin type is `0'`.** ECX has no SLIP-44 of its own, so we derive at `m/84'/0'/…` — the user's

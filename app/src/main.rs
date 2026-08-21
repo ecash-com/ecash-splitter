@@ -30,6 +30,8 @@ pub struct SplitterApp {
     address_input: Entity<gpui_component::input::InputState>,
     /// Editable Esplora endpoint. These hosts move every phase, so a fixed menu is not enough.
     endpoint_input: Entity<gpui_component::input::InputState>,
+    /// How far to look. An account created beyond the default range is otherwise invisible.
+    depth: ecx_wallet::DiscoveryDepth,
 }
 
 impl SplitterApp {
@@ -51,6 +53,7 @@ impl SplitterApp {
             error: None,
             address_input,
             endpoint_input,
+            depth: ecx_wallet::DiscoveryDepth::default(),
         };
         // Kick off the first tip read so the header is honest immediately.
         this.refresh_tip(cx);
@@ -62,6 +65,21 @@ impl SplitterApp {
     }
     pub fn endpoint_input(&self) -> &Entity<gpui_component::input::InputState> {
         &self.endpoint_input
+    }
+    pub fn depth(&self) -> ecx_wallet::DiscoveryDepth {
+        self.depth
+    }
+
+    /// How many account indices to probe per address type.
+    pub fn set_accounts_probed(&mut self, accounts: u32, cx: &mut Context<Self>) {
+        self.depth.accounts = accounts.max(1);
+        cx.notify();
+    }
+
+    /// Consecutive unused addresses that end a scan within one account.
+    pub fn set_stop_gap(&mut self, stop_gap: usize, cx: &mut Context<Self>) {
+        self.depth.stop_gap = stop_gap.max(1);
+        cx.notify();
     }
     pub fn chain(&self) -> &ChainStatus {
         &self.chain
@@ -175,9 +193,10 @@ impl SplitterApp {
     pub fn discover(&mut self, cx: &mut Context<Self>) {
         self.error = None;
         let profile = self.profile.clone();
+        let depth = self.depth;
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Progress>();
 
-        tasks::rt().spawn(async move { tasks::run_discovery(profile, tx).await });
+        tasks::rt().spawn(async move { tasks::run_discovery(profile, depth, tx).await });
 
         cx.spawn(async move |this, cx| {
             while let Some(progress) = rx.recv().await {
@@ -203,7 +222,7 @@ impl SplitterApp {
                     session,
                     phase: DiscoveryPhase::ReadingKeys,
                     scanned: 0,
-                    total: 12,
+                    total: self.depth.candidate_count(),
                     current: String::new(),
                 };
             }

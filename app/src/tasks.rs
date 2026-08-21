@@ -58,14 +58,19 @@ fn device_label(kind: ecx_signer::DeviceKind) -> String {
 
 /// The full discovery run. The sequence lives in `ecx-split`; this only adapts its events into
 /// the channel the UI listens on, which is what keeps the CLI and the GUI in step.
-pub async fn run_discovery(profile: ChainProfile, tx: UnboundedSender<Progress>) {
-    if let Err(message) = discovery_inner(profile, &tx).await {
+pub async fn run_discovery(
+    profile: ChainProfile,
+    depth: ecx_wallet::DiscoveryDepth,
+    tx: UnboundedSender<Progress>,
+) {
+    if let Err(message) = discovery_inner(profile, depth, &tx).await {
         let _ = tx.send(Progress::Failed(message));
     }
 }
 
 async fn discovery_inner(
     profile: ChainProfile,
+    depth: ecx_wallet::DiscoveryDepth,
     tx: &UnboundedSender<Progress>,
 ) -> Result<(), String> {
     let chain = EsploraChain::new(profile).map_err(|e| e.to_string())?;
@@ -73,35 +78,29 @@ async fn discovery_inner(
     let label = device_label(signer.kind());
 
     let tx_events = tx.clone();
-    let (_, accounts) = ecx_split::discover(
-        &chain,
-        signer.as_ref(),
-        label,
-        ecx_wallet::DiscoveryDepth::default(),
-        move |event| {
-            let progress = match event {
-                SplitEvent::Connected(id) => Progress::Connected(DeviceSession {
-                    kind: id.kind,
-                    label: id.label,
-                    version: id.version,
-                    fingerprint: id.fingerprint,
-                }),
-                SplitEvent::ReadingKeys { done, total, label } => Progress::Step {
-                    phase: DiscoveryPhase::ReadingKeys,
-                    scanned: done,
-                    total,
-                    label,
-                },
-                SplitEvent::Scanning { done, total, label } => Progress::Step {
-                    phase: DiscoveryPhase::Scanning,
-                    scanned: done,
-                    total,
-                    label,
-                },
-            };
-            let _ = tx_events.send(progress);
-        },
-    )
+    let (_, accounts) = ecx_split::discover(&chain, signer.as_ref(), label, depth, move |event| {
+        let progress = match event {
+            SplitEvent::Connected(id) => Progress::Connected(DeviceSession {
+                kind: id.kind,
+                label: id.label,
+                version: id.version,
+                fingerprint: id.fingerprint,
+            }),
+            SplitEvent::ReadingKeys { done, total, label } => Progress::Step {
+                phase: DiscoveryPhase::ReadingKeys,
+                scanned: done,
+                total,
+                label,
+            },
+            SplitEvent::Scanning { done, total, label } => Progress::Step {
+                phase: DiscoveryPhase::Scanning,
+                scanned: done,
+                total,
+                label,
+            },
+        };
+        let _ = tx_events.send(progress);
+    })
     .await
     .map_err(|e| e.to_string())?;
 

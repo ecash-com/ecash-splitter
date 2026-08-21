@@ -485,6 +485,8 @@ fn ready_card(app: &SplitterApp, cx: &mut Context<SplitterApp>) -> AnyElement {
         _ => None,
     };
 
+    let controls = depth_controls(app, cx);
+
     centered(
         cx,
         div()
@@ -514,6 +516,7 @@ fn ready_card(app: &SplitterApp, cx: &mut Context<SplitterApp>) -> AnyElement {
                     .text_color(cx.theme().muted_foreground)
                     .child("Reads twelve candidate accounts from the device — four address types across three account indices — then scans each against the chain."),
             )
+            .child(controls)
             .children(blocked_reason.map(|reason| {
                 div()
                     .text_xs()
@@ -1354,6 +1357,89 @@ fn review_card(
                             thousands(ECASH_HEIGHT)
                         ))),
                 )
+                .into_any_element(),
+        ))
+        .into_any_element()
+}
+
+/// Search-depth controls.
+///
+/// Two different depths, and conflating them wastes a scan: **accounts** is how many account
+/// indices are probed per address type, so an account created beyond the default range is simply
+/// invisible without raising it; **gap** is how many consecutive unused addresses end a scan
+/// *within* an account, and raising it never finds a missing account.
+fn depth_controls(app: &SplitterApp, cx: &mut Context<SplitterApp>) -> AnyElement {
+    let depth = app.depth();
+    let busy = app.stage().is_busy();
+
+    let row = |label: &'static str, hint: SharedString, buttons: AnyElement| {
+        div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_3()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .child(div().text_xs().child(label))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(hint),
+                    ),
+            )
+            .child(buttons)
+            .into_any_element()
+    };
+
+    div()
+        .w_full()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .p_3()
+        .rounded_lg()
+        .border_1()
+        .border_color(cx.theme().border)
+        .child(row(
+            "Accounts per address type",
+            SharedString::from(format!(
+                "{} candidates read from the device",
+                depth.candidate_count()
+            )),
+            div()
+                .flex()
+                .gap_1()
+                .children([3u32, 6, 10].into_iter().enumerate().map(|(i, n)| {
+                    let selected = depth.accounts == n;
+                    let b = Button::new(("accounts", i)).label(n.to_string()).xsmall();
+                    let b = if selected { b.primary() } else { b.outline() };
+                    b.disabled(busy)
+                        .on_click(
+                            cx.listener(move |this, _, _window, cx| {
+                                this.set_accounts_probed(n, cx)
+                            }),
+                        )
+                        .into_any_element()
+                }))
+                .into_any_element(),
+        ))
+        .child(row(
+            "Address gap limit",
+            SharedString::from("unused addresses that end a scan within one account"),
+            div()
+                .flex()
+                .gap_1()
+                .children([20usize, 50, 100].into_iter().enumerate().map(|(i, n)| {
+                    let selected = depth.stop_gap == n;
+                    let b = Button::new(("gap", i)).label(n.to_string()).xsmall();
+                    let b = if selected { b.primary() } else { b.outline() };
+                    b.disabled(busy)
+                        .on_click(cx.listener(move |this, _, _window, cx| this.set_stop_gap(n, cx)))
+                        .into_any_element()
+                }))
                 .into_any_element(),
         ))
         .into_any_element()

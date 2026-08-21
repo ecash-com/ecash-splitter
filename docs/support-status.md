@@ -1,6 +1,6 @@
 # Support status
 
-What works today, what does not, and what each missing piece needs. Written 2026-08-21, updated after adding Trezor and the air-gap import; check
+What works today, what does not, and what each missing piece needs. Written 2026-08-21, updated after signing was verified on hardware; check
 `git log` before trusting it. Section references are to [`CLAUDE.md`](../CLAUDE.md).
 
 Key: ✅ works · 🟡 implemented, untested on hardware · ⛔ deliberately excluded · ❌ not built
@@ -12,7 +12,7 @@ Key: ✅ works · 🟡 implemented, untested on hardware · ⛔ deliberately exc
 | | |
 |---|---|
 | **Frontends** | Desktop (GPUI) ✅ · CLI (`ecx`) ✅ — both share `ecx-split`, neither owns the flow |
-| **Flow** | Connect → discover → select → destination → build → review ✅ · **sign + verify ✅ CLI, verified on a Ledger**, ❌ GUI · broadcast ❌ |
+| **Flow** | Connect → discover → select → destination → build → review ✅ · **sign + verify ✅ CLI, verified end to end on a Ledger** · ❌ GUI signing · broadcast ❌ |
 | **Devices** | USB: Ledger ✅ · Coldcard 🟡 · Specter 🟡 · Jade 🟡 · Trezor 🟡 · BitBox02 ❌<br>Air-gap: **parked** — library exists, no UI |
 | **Chain** | Esplora ✅ · Electrum ❌ · compact-filter SPV ⛔ |
 | **Tests** | 52, all passing. 19 of them are the `ecx-core` invariant suite |
@@ -30,14 +30,37 @@ nowhere valid to go.
 
 | Device | Transport | Library | State |
 |---|---|---|---|
-| **Ledger** Nano S+ / X | USB HID | `async-hwi` | ✅ Verified against a real Nano X (app 2.5.0): connect, fingerprint, 12 account xpubs, discovery, and sweep construction through to the confirmation prompt |
+| **Ledger** Nano S+ / X | USB HID | `async-hwi` | ✅ **Verified end to end** on a Nano X (app 2.5.0): connect, fingerprint, 12 account xpubs, discovery, sweep construction, on-device signing, and verification |
 | **Coldcard** | USB HID | `async-hwi` | 🟡 Implemented, never run against hardware |
 | **Specter DIY** | Serial | `async-hwi` | 🟡 Implemented, never run against hardware |
 | **Jade** | Serial | `async-hwi` | 🟡 Implemented, never run against hardware. Unlock relays to Blockstream's blind PIN oracle — see below |
 | **Trezor** Model T / Safe 3 / Safe 5 | USB | `trezor-client` | 🟡 Implemented, never run against hardware. Runs on a dedicated thread — see below |
 
-`sign()` is wired for all five but **never called**, because the flow stops at review. It is
-untested on every device including Ledger.
+`sign()` is wired for all five. **Verified on Ledger** (see below); untested on Coldcard,
+Specter, Jade and Trezor.
+
+### Verified on hardware, 2026-08-21
+
+A real sweep signed on a Nano X and decoded independently of the tool that produced it:
+
+| Property | Value |
+|---|---|
+| `nLockTime` | **499999999** — trailing bytes `ff64cd1d` |
+| Below `LOCKTIME_THRESHOLD` | yes, so Bitcoin reads it as a block height ~500M away and will never relay or mine it |
+| `nSequence` | **`0xfffffffd`** — non-final, so the locktime is actually enforced |
+| Outputs | 1, no change |
+| Destination | decodes to the address passed on the command line |
+| txid | recomputed from the stripped serialization, matches |
+
+Both halves of the replay protection are present. The locktime alone would be inert with a final
+sequence — that is the expensive bug the `ecx-core` suite exists to catch, and this transaction
+has it right. The trailing `ff64cd1d` matches what `../ecash-electrum` independently predicts a
+correct ECX transaction ends with.
+
+**The Ledger wallet policy works.** `wpkh([fingerprint/84'/0'/2']xpub.../**)` with an empty name
+was accepted as a *default* policy — no registration, no HMAC. That was the largest unknown, and
+it is the same machinery `display_address` needs, so on-device address verification is now
+reachable (§12).
 
 **Jade and the blind oracle.** Unlocking a Jade makes an HTTPS request to Blockstream's PIN
 oracle. This is required, not incidental: Jade has no secure element, so the oracle is what makes
@@ -120,11 +143,11 @@ fallback preset.
 |---|---|
 | 1. Chain status + sync gate | ✅ Freshness-based; refuses to report a balance from a lagging indexer |
 | 2. Connect device | ✅ Enumerates across all four backends |
-| 3. Discover accounts | ✅ 4 script types × 3 account indices by default, gap limit 20. CLI exposes `--accounts` and `--gap`; the GUI does not yet |
+| 3. Discover accounts | ✅ 4 script types × 3 account indices by default, gap limit 20. Depth adjustable in both frontends: `--accounts` / `--gap`, and preset buttons in the GUI |
 | 4. Select account | ✅ |
 | 5. Destination | ✅ Pasted (default, behind a typed acknowledgement) or device-derived at `m/84'/0'/1'` |
 | 6. Build + review | ✅ Sweep PSBT, full breakdown, unsigned PSBT shown and copyable |
-| 7. Sign | 🟡 `ecx sign` does it end to end; the GUI button stays **deliberately disabled**. Untested on hardware |
+| 7. Sign | ✅ `ecx sign` does it end to end, verified on a Ledger. The GUI button stays **deliberately disabled** |
 | 8. Verify signed bytes | ✅ Called by `ecx_split::sign_and_verify`, on both device shapes. `resolve_signed` finalizes a PSBT or takes Trezor's transaction as-is |
 | 9. Broadcast | 🟡 `ecx_split::broadcast` implemented and requires a `BroadcastPermit`, which no probe can mint until the chains diverge. No UI |
 | 10. Wait for depth | ❌ Not built. `MIN_CONFIRMATIONS = 30` is a placeholder pending real alpha block times |
@@ -148,8 +171,8 @@ fallback preset.
   (§7.5).
 - **Fee rate is fixed at 1 sat/vB** in the GUI, with a 200,000 sat absolute cap. The CLI has
   `--feerate`.
-- **Search depth is not adjustable in the GUI.** An account created beyond index 2 is invisible
-  there; the CLI has `--accounts`.
+- **A USB HID device can only be open once** — see the note above; signing needs a second
+  connection and the first must be dropped.
 - **Passphrase wallets** are not surfaced. A passphrase yields a different fingerprint and a
   completely different account set; the app neither asks about one nor supports rescanning per
   passphrase (§5.6).
@@ -252,10 +275,9 @@ unstarted. See §11 — the signing burden is the real cost, not the code.
 
 ## Suggested order
 
-1. **Run `ecx sign` against a real device** — signing has never executed on any hardware. This
-   is the last untested link in the chain, and the Ledger wallet-policy path in particular is
-   unproven
-2. **GUI parity** — the desktop app still stops at review
+1. **GUI parity** — the desktop app still stops at review, while the CLI signs and verifies
+2. **The other four devices** — Coldcard, Specter, Jade and Trezor are implemented and have never
+   touched hardware. Ledger proved the shape works; each of the others has its own quirks
 3. **BitBox02** — small, self-contained; the last USB device
 4. **`display_address`** via Ledger wallet policies — makes device-derived destinations
    verifiable, at which point the §7.5 default should be revisited
