@@ -7,7 +7,8 @@
 use bitcoin::{Address, bip32::Fingerprint};
 use ecx_chain::{ChainProfile, ProfileKind, ScanReadiness, TipInfo};
 use ecx_signer::DeviceKind;
-use ecx_wallet::{DiscoveredAccount, SweepSummary};
+use ecx_split::BuiltSweep;
+use ecx_wallet::DiscoveredAccount;
 
 /// What we know about the chain source.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -115,7 +116,21 @@ pub enum Stage {
     Review {
         session: DeviceSession,
         account: Box<DiscoveredAccount>,
-        summary: Box<SweepSummary>,
+        built: Box<BuiltSweep>,
+    },
+    /// Step 7 — on the device. The user is looking at their Ledger, not at us.
+    Signing {
+        session: DeviceSession,
+        account: Box<DiscoveredAccount>,
+        built: Box<BuiltSweep>,
+    },
+    /// Step 8 — signed and **verified**, but deliberately not broadcast.
+    Signed {
+        session: DeviceSession,
+        account: Box<DiscoveredAccount>,
+        built: Box<BuiltSweep>,
+        txid: String,
+        raw_hex: String,
     },
 }
 
@@ -161,7 +176,9 @@ impl Stage {
             | Stage::Accounts { session: s, .. }
             | Stage::ChoosingDestination { session: s, .. }
             | Stage::Building { session: s, .. }
-            | Stage::Review { session: s, .. } => Some(s),
+            | Stage::Review { session: s, .. }
+            | Stage::Signing { session: s, .. }
+            | Stage::Signed { session: s, .. } => Some(s),
             _ => None,
         }
     }
@@ -191,7 +208,18 @@ pub enum Progress {
 /// Result of building the sweep.
 #[derive(Debug, Clone)]
 pub enum BuildOutcome {
-    Ready(Box<SweepSummary>),
+    Ready(Box<BuiltSweep>),
+    Failed(String),
+}
+
+/// Result of signing on the device and re-verifying what it returned.
+#[derive(Debug, Clone)]
+pub enum SignOutcome {
+    /// Signed **and** verified against the reviewed intent. Not broadcast.
+    Verified {
+        txid: String,
+        raw_hex: String,
+    },
     Failed(String),
 }
 

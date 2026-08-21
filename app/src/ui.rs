@@ -13,7 +13,7 @@ use gpui_component::{
 
 use ecx_chain::{ChainProfile, ProfileKind, ScanReadiness};
 use ecx_core::{ALPHA_HEIGHT, ECASH_HEIGHT, Phase};
-use ecx_wallet::{DiscoveredAccount, SweepSummary};
+use ecx_wallet::DiscoveredAccount;
 
 use crate::SplitterApp;
 use crate::state::{ChainStatus, DestinationChoice, DiscoveryPhase, Stage, profile_notice};
@@ -369,9 +369,15 @@ pub fn body(app: &SplitterApp, cx: &mut Context<SplitterApp>) -> AnyElement {
             "Building the transaction…",
             "Re-scanning the account and selecting every UTXO to sweep.",
         ),
-        Stage::Review {
-            account, summary, ..
-        } => review_card(app, account, summary, cx),
+        Stage::Review { account, built, .. } => review_card(app, account, built, false, cx),
+        Stage::Signing { account, built, .. } => review_card(app, account, built, true, cx),
+        Stage::Signed {
+            account,
+            built,
+            txid,
+            raw_hex,
+            ..
+        } => signed_card(app, account, built, txid, raw_hex, cx),
     }
 }
 
@@ -1182,9 +1188,11 @@ fn destination_choice_block(
 fn review_card(
     app: &SplitterApp,
     account: &DiscoveredAccount,
-    summary: &SweepSummary,
+    built: &ecx_split::BuiltSweep,
+    signing: bool,
     cx: &mut Context<SplitterApp>,
 ) -> AnyElement {
+    let summary = &built.summary;
     let profile = app.profile();
     let psbt_for_clipboard = summary.psbt_base64.clone();
     let has_prev = summary.has_prev_txs;
@@ -1343,8 +1351,139 @@ fn review_card(
                 .child(
                     Button::new("sign")
                         .primary()
-                        .label("Sign on device")
-                        .disabled(true),
+                        .label(if signing { "Signing…" } else { "Sign on device" })
+                        .loading(signing)
+                        .disabled(signing)
+                        .on_click(cx.listener(|this, _, _window, cx| this.sign(cx))),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(SharedString::from(if signing {
+                            "Approve on your device. It will say \"Bitcoin\".".to_string()
+                        } else {
+                            format!(
+                                "Signing is safe now: this transaction carries a locktime Bitcoin will never accept. It will NOT be broadcast — eCash has not activated at block {}, so no endpoint can pass the fork probe.",
+                                thousands(ECASH_HEIGHT)
+                            )
+                        })),
+                )
+                .into_any_element(),
+        ))
+        .into_any_element()
+}
+
+/// Step 8 — signed and verified. Deliberately not broadcast.
+fn signed_card(
+    app: &SplitterApp,
+    account: &DiscoveredAccount,
+    built: &ecx_split::BuiltSweep,
+    txid: &str,
+    raw_hex: &str,
+    cx: &mut Context<SplitterApp>,
+) -> AnyElement {
+    let profile = app.profile();
+    let summary = &built.summary;
+    let hex_for_clipboard = raw_hex.to_string();
+
+    div()
+        .size_full()
+        .flex()
+        .flex_col()
+        .gap_4()
+        .child(section_header("Signed and verified", cx))
+        .child(scroll_area(
+            "signed",
+            div()
+                .flex()
+                .flex_col()
+                .gap_4()
+                .pr_2()
+                .child(banner(
+                    cx,
+                    IconName::CircleCheck,
+                    cx.theme().success,
+                    "Verified against the transaction you reviewed",
+                    "The device's output was re-checked: locktime, every input sequence, every outpoint and every output match what you confirmed. Nothing was taken on trust.",
+                ))
+                .child(
+                    div()
+                        .p_4()
+                        .rounded_lg()
+                        .border_1()
+                        .border_color(cx.theme().border)
+                        .bg(cx.theme().secondary.opacity(0.3))
+                        .child(field(cx, "From", account.label()))
+                        .child(field(cx, "To", summary.destination.clone()))
+                        .child(field(cx, "Sending", profile.format(summary.sending)))
+                        .child(field(cx, "Fee", profile.format(summary.fee)))
+                        .child(field(cx, "nLockTime", summary.locktime.to_string()))
+                        .child(field(cx, "txid", txid.to_string())),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child("Signed transaction (hex)"),
+                                )
+                                .child(
+                                    Button::new("copy-tx")
+                                        .outline()
+                                        .xsmall()
+                                        .label("Copy")
+                                        .on_click(move |_, _window, cx| {
+                                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                                hex_for_clipboard.clone(),
+                                            ));
+                                        }),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .p_3()
+                                .rounded_md()
+                                .border_1()
+                                .border_color(cx.theme().border)
+                                .bg(cx.theme().secondary.opacity(0.4))
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(SharedString::from(raw_hex.to_string())),
+                        ),
+                )
+                .child(banner(
+                    cx,
+                    IconName::Info,
+                    cx.theme().info,
+                    "Not broadcast",
+                    "eCash has not activated yet, so no endpoint can pass the fork probe and there is nowhere valid to send this. It is also inert on Bitcoin — the locktime makes it permanently non-final there, and it cannot be altered without invalidating the signature. Keep the hex if you want to broadcast it yourself later.",
+                ))
+                .into_any_element(),
+        ))
+        .child(action_bar(
+            cx,
+            div()
+                .w_full()
+                .flex()
+                .items_center()
+                .gap_3()
+                .child(
+                    Button::new("done")
+                        .outline()
+                        .label("Back to accounts")
+                        .on_click(cx.listener(|this, _, _window, cx| this.back_to_accounts(cx))),
                 )
                 .child(
                     div()
@@ -1353,7 +1492,7 @@ fn review_card(
                         .text_xs()
                         .text_color(cx.theme().muted_foreground)
                         .child(SharedString::from(format!(
-                            "Signing is disabled until eCash activates at block {}. Until then the chains are identical, the fork probe cannot clear any endpoint, and a signed transaction would have nowhere valid to go.",
+                            "Broadcasting becomes possible after block {}.",
                             thousands(ECASH_HEIGHT)
                         ))),
                 )

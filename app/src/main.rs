@@ -18,7 +18,7 @@ use gpui_component::{ActiveTheme as _, Root};
 use ecx_chain::ChainProfile;
 use state::{
     BuildOutcome, ChainStatus, DestinationChoice, DestinationOutcome, DiscoveryPhase, Progress,
-    Stage,
+    SignOutcome, Stage,
 };
 
 pub struct SplitterApp {
@@ -406,7 +406,7 @@ impl SplitterApp {
             )
             .await
             {
-                Ok(summary) => BuildOutcome::Ready(Box::new(summary)),
+                Ok(built) => BuildOutcome::Ready(Box::new(built)),
                 Err(message) => BuildOutcome::Failed(message),
             };
             let _ = tx.send(outcome);
@@ -416,11 +416,11 @@ impl SplitterApp {
             let Ok(outcome) = rx.await else { return };
             let _ = this.update(cx, |this, cx| {
                 match outcome {
-                    BuildOutcome::Ready(summary) => {
+                    BuildOutcome::Ready(built) => {
                         this.stage = Stage::Review {
                             session,
                             account,
-                            summary,
+                            built,
                         };
                     }
                     BuildOutcome::Failed(message) => {
@@ -431,6 +431,69 @@ impl SplitterApp {
                             choice: DestinationChoice::Pending,
                         };
                         this.derive_device_destination(cx);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Step 7: sign on the device, then re-verify what it returned (Golden Rule 3).
+    ///
+    /// Signing pre-fork is harmless — the transaction carries a locktime Bitcoin will never
+    /// accept — so this runs today. Broadcasting does not.
+    pub fn sign(&mut self, cx: &mut Context<Self>) {
+        let Stage::Review {
+            session,
+            account,
+            built,
+        } = &self.stage
+        else {
+            return;
+        };
+        let (session, account, built) = (session.clone(), account.clone(), built.clone());
+        let kind = session.kind;
+        let policy = account.ledger_policy();
+
+        self.error = None;
+        self.stage = Stage::Signing {
+            session: session.clone(),
+            account: account.clone(),
+            built: built.clone(),
+        };
+        cx.notify();
+
+        let payload = (*built).clone();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        tasks::rt().spawn(async move {
+            let outcome = match tasks::sign_reviewed(kind, policy, payload).await {
+                Ok((txid, raw_hex)) => SignOutcome::Verified { txid, raw_hex },
+                Err(message) => SignOutcome::Failed(message),
+            };
+            let _ = tx.send(outcome);
+        });
+
+        cx.spawn(async move |this, cx| {
+            let Ok(outcome) = rx.await else { return };
+            let _ = this.update(cx, |this, cx| {
+                match outcome {
+                    SignOutcome::Verified { txid, raw_hex } => {
+                        this.stage = Stage::Signed {
+                            session,
+                            account,
+                            built,
+                            txid,
+                            raw_hex,
+                        };
+                    }
+                    SignOutcome::Failed(message) => {
+                        this.error = Some(message);
+                        this.stage = Stage::Review {
+                            session,
+                            account,
+                            built,
+                        };
                     }
                 }
                 cx.notify();

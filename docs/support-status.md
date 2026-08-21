@@ -12,11 +12,11 @@ Key: ✅ works · 🟡 implemented, untested on hardware · ⛔ deliberately exc
 | | |
 |---|---|
 | **Frontends** | Desktop (GPUI) ✅ · CLI (`ecx`) ✅ — both share `ecx-split`, neither owns the flow |
-| **Flow** | Connect → discover → select → destination → build → review ✅ · **sign + verify ✅ CLI, verified end to end on a Ledger** · ❌ GUI signing · broadcast ❌ |
+| **Flow** | Connect → discover → select → destination → build → review → **sign + verify** ✅ in **both** frontends · broadcast ❌ |
 | **Devices** | USB: Ledger ✅ · Coldcard 🟡 · Specter 🟡 · Jade 🟡 · Trezor 🟡 · BitBox02 ❌<br>Air-gap: **parked** — library exists, no UI |
 | **Chain** | Esplora ✅ · Electrum ❌ · compact-filter SPV ⛔ |
 | **Tests** | 52, all passing. 19 of them are the `ecx-core` invariant suite |
-| **Frontend parity** | Both frontends stop at review; neither can sign |
+| **Frontend parity** | At parity: both sign, verify, and adjust search depth. Neither broadcasts |
 
 The app **stops before signing on purpose**: eCash activates at block 963,648 and until then the
 chains are identical, no endpoint can pass the fork probe, and a signed transaction would have
@@ -147,7 +147,7 @@ fallback preset.
 | 4. Select account | ✅ |
 | 5. Destination | ✅ Pasted (default, behind a typed acknowledgement) or device-derived at `m/84'/0'/1'` |
 | 6. Build + review | ✅ Sweep PSBT, full breakdown, unsigned PSBT shown and copyable |
-| 7. Sign | ✅ `ecx sign` does it end to end, verified on a Ledger. The GUI button stays **deliberately disabled** |
+| 7. Sign | ✅ Both frontends. Verified on a Ledger via the CLI; the GUI path shares the same `ecx-split` code but has not been run on hardware |
 | 8. Verify signed bytes | ✅ Called by `ecx_split::sign_and_verify`, on both device shapes. `resolve_signed` finalizes a PSBT or takes Trezor's transaction as-is |
 | 9. Broadcast | 🟡 `ecx_split::broadcast` implemented and requires a `BroadcastPermit`, which no probe can mint until the chains diverge. No UI |
 | 10. Wait for depth | ❌ Not built. `MIN_CONFIRMATIONS = 30` is a placeholder pending real alpha block times |
@@ -275,11 +275,10 @@ unstarted. See §11 — the signing burden is the real cost, not the code.
 
 ## Suggested order
 
-1. **GUI parity** — the desktop app still stops at review, while the CLI signs and verifies
-2. **The other four devices** — Coldcard, Specter, Jade and Trezor are implemented and have never
+1. **The other four devices** — Coldcard, Specter, Jade and Trezor are implemented and have never
    touched hardware. Ledger proved the shape works; each of the others has its own quirks
-3. **BitBox02** — small, self-contained; the last USB device
-4. **`display_address`** via Ledger wallet policies — makes device-derived destinations
+2. **BitBox02** — small, self-contained; the last USB device
+3. **`display_address`** via Ledger wallet policies — makes device-derived destinations
    verifiable, at which point the §7.5 default should be revisited
-5. **Linux and Windows** — required before anyone but us can run this
-6. **Air-gap by QR** — the big one, and the only thing that reaches SeedSigner and Keystone
+4. **Linux and Windows** — required before anyone but us can run this
+5. **Air-gap by QR** — the big one, and the only thing that reaches SeedSigner and Keystone

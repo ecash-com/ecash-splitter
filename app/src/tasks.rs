@@ -124,14 +124,17 @@ pub async fn build_sweep_summary(
     account: ecx_wallet::DiscoveredAccount,
     destination: bitcoin::Address,
     fingerprint: bitcoin::bip32::Fingerprint,
-) -> Result<ecx_wallet::SweepSummary, String> {
+) -> Result<ecx_split::BuiltSweep, String> {
     let chain = EsploraChain::new(profile).map_err(|e| e.to_string())?;
     // The UI already required its own confirmation before getting here (§7.5).
     let destination = ecx_split::Destination::Pasted {
         address: destination,
         acknowledged: true,
     };
-    ecx_split::build_sweep(
+    // The *full* build: the PSBT and its intent are kept, not just the summary. verify_signed
+    // compares against the intent derived from the PSBT the user was shown; re-deriving it later
+    // from the device's own output would compare a transaction against itself.
+    ecx_split::build_sweep_full(
         &chain,
         &account,
         &destination,
@@ -140,4 +143,31 @@ pub async fn build_sweep_summary(
     )
     .await
     .map_err(|e| e.to_string())
+}
+
+/// Sign the reviewed sweep on the device and re-verify what comes back.
+///
+/// Stops there deliberately. Broadcasting needs a `BroadcastPermit`, which no probe can mint
+/// until the chains diverge — and signing pre-fork is harmless, because the transaction carries
+/// a locktime Bitcoin will never accept.
+pub async fn sign_reviewed(
+    kind: ecx_signer::DeviceKind,
+    policy: String,
+    built: ecx_split::BuiltSweep,
+) -> Result<(String, String), String> {
+    // A fresh connection: Ledger's wallet policy can only be set at construction, and the
+    // account is not known until discovery has run. Nothing else holds the device here — every
+    // task in this module connects and drops within its own scope.
+    let signer = ecx_signer::connect_for_signing(kind, &policy)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let tx = ecx_split::sign_and_verify(signer.as_ref(), &built.psbt, &built.intent)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok((
+        tx.compute_txid().to_string(),
+        bitcoin::consensus::encode::serialize_hex(&tx),
+    ))
 }

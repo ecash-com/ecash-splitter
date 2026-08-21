@@ -221,7 +221,7 @@ pub async fn device_destination(signer: &dyn Signer) -> Result<Destination, Spli
 /// against what the **user confirmed** — so the intent must be derived here, from the PSBT that
 /// was actually displayed, and carried forward. Re-deriving it later from the returned bytes
 /// would compare a transaction against itself and turn the check into theatre.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuiltSweep {
     pub psbt: EcxPsbt,
     pub intent: TxIntent,
