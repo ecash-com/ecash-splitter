@@ -7,12 +7,18 @@
 pub enum ProfileKind {
     /// An ECX endpoint. Broadcast is still gated on the fork probe passing.
     Ecx,
-    /// Bitcoin mainnet, **discovery only**.
+    /// Bitcoin mainnet, **discovery only**. No profile currently uses this.
     ///
-    /// Legitimate before the fork: ECX and Bitcoin share every block below `ECASH_HEIGHT`, so a
-    /// Bitcoin indexer returns exactly the same pre-fork UTXO set — and unlike the ECX indexers,
-    /// it is fully synced today. Broadcast is impossible regardless, because the fork probe can
-    /// never return `ConfirmedEcx` for it.
+    /// Kept because the idea is sound — below `ECASH_HEIGHT` the two chains are identical, so a
+    /// Bitcoin indexer returns the same pre-fork UTXO set, and broadcast stays impossible because
+    /// the fork probe can never return `ConfirmedEcx` for it. What is missing is a *host*.
+    ///
+    /// **Do not point this at mempool.space.** It looks like Esplora but is not: it rejects the
+    /// `/scripthash/{hash}/txs` endpoints `bdk_esplora` scans with (HTTP 400 "Invalid
+    /// scripthash"), so every discovery run fails on the scan step while the tip request
+    /// succeeds — which reads as "the endpoint works, the wallet is broken". `blockstream.info`
+    /// does implement them but was unreachable from our network on 2026-08-21. Re-add only with
+    /// a host verified against a real `full_scan`, not just `/blocks/tip/height`.
     BitcoinReadOnly,
 }
 
@@ -40,20 +46,7 @@ impl ChainProfile {
         kind: ProfileKind::Ecx,
     };
 
-    /// Bitcoin mainnet, discovery only. A fallback for exercising discovery if the ECX
-    /// endpoints are down — `blockstream.info` was unreachable on 2026-08-21, so this points at
-    /// mempool.space.
-    pub const BITCOIN_READ_ONLY: Self = Self {
-        name: "Bitcoin (discovery only)",
-        esplora_url: "https://mempool.space/api",
-        kind: ProfileKind::BitcoinReadOnly,
-    };
-
-    pub const ALL: [Self; 3] = [
-        Self::ECX_ALPHA,
-        Self::ECX_ALPHA_ESPLORA,
-        Self::BITCOIN_READ_ONLY,
-    ];
+    pub const ALL: [Self; 2] = [Self::ECX_ALPHA, Self::ECX_ALPHA_ESPLORA];
 
     pub fn is_ecx(&self) -> bool {
         matches!(self.kind, ProfileKind::Ecx)

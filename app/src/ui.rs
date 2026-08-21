@@ -609,6 +609,10 @@ fn accounts_view(
     }
 
     let profile = app.profile();
+    // Pre-fork these balances are literally Bitcoin — the fork block does not exist yet. Calling
+    // them "ECX" is right about what they will become and wrong about what they are today, so
+    // say so rather than letting the ticker imply the split already happened.
+    let pre_fork = app.chain().tip().is_some_and(|tip| tip < ECASH_HEIGHT);
     div()
         .size_full()
         .flex()
@@ -636,6 +640,24 @@ fn accounts_view(
                         .child("Select the account to split"),
                 ),
         )
+        .children(pre_fork.then(|| {
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .px_3()
+                .py_2()
+                .rounded_md()
+                .bg(cx.theme().info.opacity(0.08))
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child(Icon::new(IconName::Info).xsmall().text_color(cx.theme().info))
+                .child(SharedString::from(format!(
+                    "These are your Bitcoin balances. Block {} has not been mined yet, so nothing is splittable until it is — this is what you will be able to claim.",
+                    thousands(ECASH_HEIGHT)
+                )))
+                .into_any_element()
+        }))
         .children(
             accounts
                 .iter()

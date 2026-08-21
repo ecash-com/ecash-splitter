@@ -11,7 +11,7 @@ use bitcoin::{
     Network,
     bip32::{Fingerprint, Xpub},
 };
-use ecx_chain::ScanReadiness;
+use ecx_chain::{EsploraChain, ScanReadiness};
 
 /// "3 hours", "2 days" — for error text.
 pub(crate) fn humanize(secs: u64) -> String {
@@ -22,7 +22,6 @@ pub(crate) fn humanize(secs: u64) -> String {
         s => format!("{} days", s / 86_400),
     }
 }
-use esplora_client::AsyncClient;
 
 use crate::{AccountCandidate, DiscoveredAccount, STOP_GAP, descriptor_pair};
 
@@ -56,7 +55,7 @@ pub struct DiscoveryProgress {
 /// Returns `None` when the account has no history at all — the common case, since most of the
 /// twelve candidates are empty for any given user.
 async fn scan_one(
-    client: &AsyncClient,
+    chain: &EsploraChain,
     candidate: &AccountCandidate,
     fingerprint: Fingerprint,
     xpub: &Xpub,
@@ -69,10 +68,12 @@ async fn scan_one(
         .map_err(|e| WalletError::Descriptor(e.to_string()))?;
 
     let request = wallet.start_full_scan().build();
-    let update = client
-        .full_scan(request, STOP_GAP, PARALLEL_REQUESTS)
+    // Route through the chain so the error is a phrase, not a paragraph of reqwest debug.
+    let update = chain
+        .client()
+        .full_scan::<KeychainKind, _>(request, STOP_GAP, PARALLEL_REQUESTS)
         .await
-        .map_err(|e| WalletError::Scan(e.to_string()))?;
+        .map_err(|e| WalletError::Scan(chain.describe_error(*e).to_string()))?;
     wallet
         .apply_update(update)
         .map_err(|e| WalletError::Scan(e.to_string()))?;
@@ -97,7 +98,7 @@ async fn scan_one(
 /// **Golden Rule 9**: gated on [`guard_synced`], so an empty return value always means "we
 /// looked at a caught-up chain and found nothing", never "we could not see far enough".
 pub async fn discover(
-    client: &AsyncClient,
+    chain: &EsploraChain,
     readiness: ScanReadiness,
     fingerprint: Fingerprint,
     xpubs: &[(AccountCandidate, Xpub)],
@@ -114,7 +115,7 @@ pub async fn discover(
             total,
             current: candidate.clone(),
         });
-        if let Some(account) = scan_one(client, candidate, fingerprint, xpub).await? {
+        if let Some(account) = scan_one(chain, candidate, fingerprint, xpub).await? {
             found.push(account);
         }
     }

@@ -81,7 +81,8 @@ impl EsploraChain {
             .unwrap_or(self.profile.esplora_url)
     }
 
-    fn err(&self, e: esplora_client::Error) -> ChainError {
+    /// Reduce an Esplora error to short, human text naming this host.
+    pub fn describe_error(&self, e: esplora_client::Error) -> ChainError {
         describe(self.host(), e)
     }
 }
@@ -89,17 +90,28 @@ impl EsploraChain {
 #[async_trait::async_trait]
 impl ChainSource for EsploraChain {
     async fn tip_height(&self) -> Result<u32, ChainError> {
-        self.client.get_height().await.map_err(|e| self.err(e))
+        self.client
+            .get_height()
+            .await
+            .map_err(|e| self.describe_error(e))
     }
 
     async fn tip(&self) -> Result<TipInfo, ChainError> {
-        let hash = self.client.get_tip_hash().await.map_err(|e| self.err(e))?;
+        let hash = self
+            .client
+            .get_tip_hash()
+            .await
+            .map_err(|e| self.describe_error(e))?;
         let header = self
             .client
             .get_header_by_hash(&hash)
             .await
-            .map_err(|e| self.err(e))?;
-        let height = self.client.get_height().await.map_err(|e| self.err(e))?;
+            .map_err(|e| self.describe_error(e))?;
+        let height = self
+            .client
+            .get_height()
+            .await
+            .map_err(|e| self.describe_error(e))?;
         Ok(TipInfo {
             height,
             time: header.time,
@@ -112,12 +124,15 @@ impl ChainSource for EsploraChain {
             // A height the chain has not reached yet is a 404, not a failure.
             Err(esplora_client::Error::HttpResponse { status: 404, .. }) => Ok(None),
             Err(esplora_client::Error::HeaderHeightNotFound(_)) => Ok(None),
-            Err(e) => Err(self.err(e)),
+            Err(e) => Err(self.describe_error(e)),
         }
     }
 
     async fn raw_tx(&self, txid: Txid) -> Result<Option<Transaction>, ChainError> {
-        self.client.get_tx(&txid).await.map_err(|e| self.err(e))
+        self.client
+            .get_tx(&txid)
+            .await
+            .map_err(|e| self.describe_error(e))
     }
 
     async fn broadcast(
@@ -126,7 +141,10 @@ impl ChainSource for EsploraChain {
         _permit: &BroadcastPermit,
     ) -> Result<Txid, ChainError> {
         // The permit proves the fork probe returned ConfirmedEcx for this endpoint.
-        self.client.broadcast(tx).await.map_err(|e| self.err(e))?;
+        self.client
+            .broadcast(tx)
+            .await
+            .map_err(|e| self.describe_error(e))?;
         Ok(tx.compute_txid())
     }
 }

@@ -95,7 +95,7 @@ async fn discovery_inner(
     let readiness = ScanReadiness::assess(tip, now_unix());
 
     let tx_progress = tx.clone();
-    let accounts = discover(chain.client(), readiness, fingerprint, &xpubs, move |p| {
+    let accounts = discover(&chain, readiness, fingerprint, &xpubs, move |p| {
         let _ = tx_progress.send(Progress::Step {
             phase: DiscoveryPhase::Scanning,
             scanned: p.scanned,
