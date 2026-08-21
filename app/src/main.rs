@@ -216,13 +216,20 @@ impl SplitterApp {
         };
         let session = session.clone();
         self.error = None;
+        // Pasting is the default. Most people splitting want the coins in a *different* wallet
+        // -- a dedicated ECX wallet -- not a second account on the same seed. And until Ledger
+        // wallet-policy registration lands, a device-derived address cannot be verified on the
+        // device screen, so it is the *less* checkable of the two: an address pasted out of your
+        // own ECX wallet is one you can verify there. (Revised 2026-08-21; CLAUDE.md §7.5.)
         self.stage = Stage::ChoosingDestination {
             session,
             account: Box::new(account),
-            choice: DestinationChoice::Pending,
+            choice: DestinationChoice::Pasted {
+                parsed: None,
+                acknowledged: false,
+            },
         };
         cx.notify();
-        self.derive_device_destination(cx);
     }
 
     /// Read the ECX destination account's xpub from the device and derive its first address.
@@ -417,9 +424,12 @@ fn main() {
             let options = WindowOptions {
                 window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::centered(
                     None,
-                    gpui::size(px(940.0), px(720.0)),
+                    gpui::size(px(960.0), px(760.0)),
                     cx,
                 ))),
+                // Below this the review screen's figures start colliding; there is no useful
+                // layout for a wallet-sized window here.
+                window_min_size: Some(gpui::size(px(720.0), px(560.0))),
                 ..Default::default()
             };
 

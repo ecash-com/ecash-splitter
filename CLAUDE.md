@@ -567,11 +567,20 @@ them.
 
 Required mitigations, all of them:
 
-- **Default to a device-derived destination** — a fresh account on the connected device, e.g.
-  `m/84'/0'/1'`, confirmed on the device screen via `display_address`. One click, no paste, no
-  typo, and the user keeps custody in one place.
-- **Pasted addresses are the secondary path** and require a typed acknowledgement naming the
-  chain. Not a checkbox.
+- **Default to a pasted address** (REVISED 2026-08-21 — this section previously defaulted to a
+  device-derived destination; that was wrong in practice). Two reasons. Most people splitting want
+  the coins in a *different* wallet — a dedicated ECX wallet like `../ecash-electrum` — not a
+  second account on the same seed, and forcing the device path makes the common case awkward.
+  More importantly, until Ledger `register_wallet` lands (§12) a device-derived address **cannot
+  be shown on the device screen**, so it is the *less* verifiable of the two: an address pasted
+  out of the user's own ECX wallet is one they can check in that wallet, against a real receive
+  screen. Defaulting to the option we cannot verify would have been false assurance.
+- **A pasted address still requires a typed acknowledgement** naming the chain. Not a checkbox.
+  This is now the primary path, so the §7.5 warning above carries more weight, not less.
+- **A device-derived destination stays available** — a fresh account on the connected device,
+  e.g. `m/84'/0'/1'`. Once `display_address` works it becomes genuinely safer than pasting and
+  this default should be revisited. Until then, say plainly in the UI that the address was
+  derived locally and has not been confirmed on the device.
 - **Hard-warn on any destination with pre-fork history.** A reused address is the loudest
   available signal that the user actually means Bitcoin.
 - **State plainly that no exchange accepts ECX deposits**, so an exchange address is always wrong.
