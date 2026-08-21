@@ -36,8 +36,8 @@ nowhere valid to go.
 | **Jade** | Serial | `async-hwi` | 🟡 Implemented, never run against hardware. Unlock relays to Blockstream's blind PIN oracle — see below |
 | **Trezor** Model T / Safe 3 / Safe 5 | USB | `trezor-client` | 🟡 Implemented, never run against hardware. Runs on a dedicated thread — see below |
 
-`sign()` is wired for all five. **Verified on Ledger** (see below); untested on Coldcard,
-Specter, Jade and Trezor.
+`sign()` is wired for all five. **Verified on Ledger through both frontends** (see below);
+untested on Coldcard, Specter, Jade and Trezor.
 
 ### Verified on hardware, 2026-08-21
 
@@ -147,7 +147,7 @@ fallback preset.
 | 4. Select account | ✅ |
 | 5. Destination | ✅ Pasted (default, behind a typed acknowledgement) or device-derived at `m/84'/0'/1'` |
 | 6. Build + review | ✅ Sweep PSBT, full breakdown, unsigned PSBT shown and copyable |
-| 7. Sign | ✅ Both frontends. Verified on a Ledger via the CLI; the GUI path shares the same `ecx-split` code but has not been run on hardware |
+| 7. Sign | ✅ Both frontends, **both verified on a Ledger** |
 | 8. Verify signed bytes | ✅ Called by `ecx_split::sign_and_verify`, on both device shapes. `resolve_signed` finalizes a PSBT or takes Trezor's transaction as-is |
 | 9. Broadcast | 🟡 `ecx_split::broadcast` implemented and requires a `BroadcastPermit`, which no probe can mint until the chains diverge. No UI |
 | 10. Wait for depth | ❌ Not built. `MIN_CONFIRMATIONS = 30` is a placeholder pending real alpha block times |
