@@ -4,10 +4,10 @@
 //! operation reconnects inside its own task and hands back plain data, which keeps the render
 //! layer free of anything that could block or fail on a USB cable.
 
-use bitcoin::bip32::Fingerprint;
+use bitcoin::{Address, bip32::Fingerprint};
 use ecx_chain::{ChainProfile, ProfileKind, ScanReadiness, TipInfo};
 use ecx_signer::DeviceKind;
-use ecx_wallet::DiscoveredAccount;
+use ecx_wallet::{DiscoveredAccount, SweepSummary};
 
 /// What we know about the chain source.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,6 +101,56 @@ pub enum Stage {
         accounts: Vec<DiscoveredAccount>,
         selected: Option<usize>,
     },
+    /// Step 5 of §7 — where the coins go.
+    ChoosingDestination {
+        session: DeviceSession,
+        account: Box<DiscoveredAccount>,
+        choice: DestinationChoice,
+    },
+    Building {
+        session: DeviceSession,
+        account: Box<DiscoveredAccount>,
+    },
+    /// Step 6 — the confirmation screen, which `CLAUDE.md` §10 calls "the product".
+    Review {
+        session: DeviceSession,
+        account: Box<DiscoveredAccount>,
+        summary: Box<SweepSummary>,
+    },
+}
+
+/// Where the swept coins go.
+///
+/// An ECX address *is* a Bitcoin address (§3), so a pasted exchange deposit address is
+/// unrecoverable and undetectable. Device-derived is the default for exactly that reason.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DestinationChoice {
+    /// A fresh account on the connected device, derived locally from its xpub.
+    Device { address: Address, path: String },
+    /// Typed or pasted. Requires a typed acknowledgement naming the chain (§7.5).
+    Pasted {
+        parsed: Option<Address>,
+        acknowledged: bool,
+    },
+    /// The device xpub for the destination account has not been read yet.
+    Pending,
+}
+
+impl DestinationChoice {
+    pub fn address(&self) -> Option<&Address> {
+        match self {
+            DestinationChoice::Device { address, .. } => Some(address),
+            DestinationChoice::Pasted {
+                parsed,
+                acknowledged,
+            } => parsed.as_ref().filter(|_| *acknowledged),
+            DestinationChoice::Pending => None,
+        }
+    }
+
+    pub fn is_pasted(&self) -> bool {
+        matches!(self, DestinationChoice::Pasted { .. })
+    }
 }
 
 impl Stage {
@@ -108,13 +158,19 @@ impl Stage {
         match self {
             Stage::Connected(s)
             | Stage::Discovering { session: s, .. }
-            | Stage::Accounts { session: s, .. } => Some(s),
+            | Stage::Accounts { session: s, .. }
+            | Stage::ChoosingDestination { session: s, .. }
+            | Stage::Building { session: s, .. }
+            | Stage::Review { session: s, .. } => Some(s),
             _ => None,
         }
     }
 
     pub fn is_busy(&self) -> bool {
-        matches!(self, Stage::Connecting | Stage::Discovering { .. })
+        matches!(
+            self,
+            Stage::Connecting | Stage::Discovering { .. } | Stage::Building { .. }
+        )
     }
 }
 
@@ -129,6 +185,20 @@ pub enum Progress {
         label: String,
     },
     Done(Vec<DiscoveredAccount>),
+    Failed(String),
+}
+
+/// Result of building the sweep.
+#[derive(Debug, Clone)]
+pub enum BuildOutcome {
+    Ready(Box<SweepSummary>),
+    Failed(String),
+}
+
+/// Result of deriving the device destination address.
+#[derive(Debug, Clone)]
+pub enum DestinationOutcome {
+    Derived { address: Address, path: String },
     Failed(String),
 }
 

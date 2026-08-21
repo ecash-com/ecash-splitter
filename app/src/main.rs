@@ -16,22 +16,32 @@ use gpui::{
 use gpui_component::{ActiveTheme as _, Root};
 
 use ecx_chain::ChainProfile;
-use state::{ChainStatus, DiscoveryPhase, Progress, Stage};
+use state::{
+    BuildOutcome, ChainStatus, DestinationChoice, DestinationOutcome, DiscoveryPhase, Progress,
+    Stage,
+};
 
 pub struct SplitterApp {
     profile: ChainProfile,
     chain: ChainStatus,
     stage: Stage,
     error: Option<String>,
+    /// Text field for a pasted destination address.
+    address_input: Entity<gpui_component::input::InputState>,
 }
 
 impl SplitterApp {
-    fn new(cx: &mut Context<Self>) -> Self {
+    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let address_input = cx.new(|cx| {
+            gpui_component::input::InputState::new(window, cx)
+                .placeholder("bc1… — an ECX address you control")
+        });
         let mut this = Self {
             profile: ChainProfile::ECX_ALPHA,
             chain: ChainStatus::Unknown,
             stage: Stage::NeedsDevice,
             error: None,
+            address_input,
         };
         // Kick off the first tip read so the header is honest immediately.
         this.refresh_tip(cx);
@@ -49,6 +59,9 @@ impl SplitterApp {
     }
     pub fn error(&self) -> Option<&str> {
         self.error.as_deref()
+    }
+    pub fn address_input(&self) -> &Entity<gpui_component::input::InputState> {
+        &self.address_input
     }
 
     // -- actions ----------------------------------------------------------
@@ -188,6 +201,184 @@ impl SplitterApp {
         }
     }
 
+    /// Step 4 → 5: the user picked an account; go choose where the coins land.
+    pub fn confirm_account(&mut self, cx: &mut Context<Self>) {
+        let Stage::Accounts {
+            session,
+            accounts,
+            selected: Some(i),
+        } = &self.stage
+        else {
+            return;
+        };
+        let Some(account) = accounts.get(*i).cloned() else {
+            return;
+        };
+        let session = session.clone();
+        self.error = None;
+        self.stage = Stage::ChoosingDestination {
+            session,
+            account: Box::new(account),
+            choice: DestinationChoice::Pending,
+        };
+        cx.notify();
+        self.derive_device_destination(cx);
+    }
+
+    /// Read the ECX destination account's xpub from the device and derive its first address.
+    pub fn derive_device_destination(&mut self, cx: &mut Context<Self>) {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        tasks::rt().spawn(async move {
+            let outcome = match tasks::derive_destination().await {
+                Ok((address, path)) => DestinationOutcome::Derived { address, path },
+                Err(message) => DestinationOutcome::Failed(message),
+            };
+            let _ = tx.send(outcome);
+        });
+        cx.spawn(async move |this, cx| {
+            let Ok(outcome) = rx.await else { return };
+            let _ = this.update(cx, |this, cx| {
+                if let Stage::ChoosingDestination { choice, .. } = &mut this.stage {
+                    match outcome {
+                        DestinationOutcome::Derived { address, path } => {
+                            *choice = DestinationChoice::Device { address, path };
+                        }
+                        DestinationOutcome::Failed(message) => {
+                            this.error = Some(message);
+                            *choice = DestinationChoice::Pasted {
+                                parsed: None,
+                                acknowledged: false,
+                            };
+                        }
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Parse whatever is in the address field and switch to the pasted path.
+    pub fn use_pasted_address(&mut self, cx: &mut Context<Self>) {
+        let text = self.address_input.read(cx).value().trim().to_string();
+        let parsed = text
+            .parse::<bitcoin::Address<bitcoin::address::NetworkUnchecked>>()
+            .ok()
+            .and_then(|a| a.require_network(bitcoin::Network::Bitcoin).ok());
+        if parsed.is_none() {
+            self.error = Some(format!("\"{text}\" is not a valid address"));
+        } else {
+            self.error = None;
+        }
+        if let Stage::ChoosingDestination { choice, .. } = &mut self.stage {
+            *choice = DestinationChoice::Pasted {
+                parsed,
+                acknowledged: false,
+            };
+        }
+        cx.notify();
+    }
+
+    /// The typed acknowledgement §7.5 requires before a pasted address can be used.
+    pub fn toggle_acknowledgement(&mut self, cx: &mut Context<Self>) {
+        if let Stage::ChoosingDestination {
+            choice: DestinationChoice::Pasted { acknowledged, .. },
+            ..
+        } = &mut self.stage
+        {
+            *acknowledged = !*acknowledged;
+            cx.notify();
+        }
+    }
+
+    pub fn use_device_destination(&mut self, cx: &mut Context<Self>) {
+        self.error = None;
+        if let Stage::ChoosingDestination { choice, .. } = &mut self.stage {
+            *choice = DestinationChoice::Pending;
+        }
+        cx.notify();
+        self.derive_device_destination(cx);
+    }
+
+    /// Step 5 → 6: build the sweep PSBT and show the review screen.
+    pub fn build_sweep(&mut self, cx: &mut Context<Self>) {
+        let Stage::ChoosingDestination {
+            session,
+            account,
+            choice,
+        } = &self.stage
+        else {
+            return;
+        };
+        let Some(destination) = choice.address().cloned() else {
+            return;
+        };
+        let (session, account) = (session.clone(), account.clone());
+        let profile = self.profile;
+        let fingerprint = session.fingerprint;
+
+        self.error = None;
+        self.stage = Stage::Building {
+            session: session.clone(),
+            account: account.clone(),
+        };
+        cx.notify();
+
+        let account_for_task = (*account).clone();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        tasks::rt().spawn(async move {
+            let outcome = match tasks::build_sweep_summary(
+                profile,
+                account_for_task,
+                destination,
+                fingerprint,
+            )
+            .await
+            {
+                Ok(summary) => BuildOutcome::Ready(Box::new(summary)),
+                Err(message) => BuildOutcome::Failed(message),
+            };
+            let _ = tx.send(outcome);
+        });
+
+        cx.spawn(async move |this, cx| {
+            let Ok(outcome) = rx.await else { return };
+            let _ = this.update(cx, |this, cx| {
+                match outcome {
+                    BuildOutcome::Ready(summary) => {
+                        this.stage = Stage::Review {
+                            session,
+                            account,
+                            summary,
+                        };
+                    }
+                    BuildOutcome::Failed(message) => {
+                        this.error = Some(message);
+                        this.stage = Stage::ChoosingDestination {
+                            session,
+                            account,
+                            choice: DestinationChoice::Pending,
+                        };
+                        this.derive_device_destination(cx);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Back out of the destination or review step, to pick a different account.
+    pub fn back_to_accounts(&mut self, cx: &mut Context<Self>) {
+        let session = self.stage.session().cloned();
+        self.error = None;
+        if let Some(session) = session {
+            self.stage = Stage::Connected(session);
+        }
+        cx.notify();
+        self.discover(cx);
+    }
+
     pub fn dismiss_error(&mut self, cx: &mut Context<Self>) {
         self.error = None;
         cx.notify();
@@ -233,7 +424,7 @@ fn main() {
             };
 
             cx.open_window(options, |window, cx| {
-                let view: Entity<SplitterApp> = cx.new(SplitterApp::new);
+                let view: Entity<SplitterApp> = cx.new(|cx| SplitterApp::new(window, cx));
                 // Root is required as the first-level view: it enables dialogs and notifications.
                 cx.new(|cx| Root::new(view, window, cx))
             })

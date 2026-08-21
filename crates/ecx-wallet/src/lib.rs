@@ -5,8 +5,10 @@
 use bitcoin::Amount;
 use bitcoin::bip32::{DerivationPath, Fingerprint, Xpub};
 
+pub mod build;
 pub mod discovery;
 
+pub use build::{BuildError, SweepSummary, build_sweep, device_destination, summarize};
 pub use discovery::{DiscoveryProgress, WalletError, discover};
 
 /// ECX has no SLIP-44 coin type of its own, so everything derives under Bitcoin's `0'`

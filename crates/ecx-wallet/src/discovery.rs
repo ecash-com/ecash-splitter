@@ -26,7 +26,7 @@ pub(crate) fn humanize(secs: u64) -> String {
 use crate::{AccountCandidate, DiscoveredAccount, STOP_GAP, descriptor_pair};
 
 /// Concurrent requests per scan. Esplora hosts are shared infrastructure; be a good citizen.
-const PARALLEL_REQUESTS: usize = 5;
+pub(crate) const PARALLEL_REQUESTS: usize = 5;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum WalletError {

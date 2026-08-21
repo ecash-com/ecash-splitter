@@ -3,7 +3,7 @@
 use bitcoin::Amount;
 use gpui::{
     AnyElement, App, Context, InteractiveElement as _, IntoElement, ParentElement, SharedString,
-    StatefulInteractiveElement as _, Styled, div, px, relative,
+    StatefulInteractiveElement as _, Styled, div, prelude::FluentBuilder as _, px, relative,
 };
 use gpui_component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, button::Button,
@@ -12,10 +12,10 @@ use gpui_component::{
 
 use ecx_chain::{ChainProfile, ProfileKind, ScanReadiness};
 use ecx_core::{ALPHA_HEIGHT, ECASH_HEIGHT, Phase};
-use ecx_wallet::DiscoveredAccount;
+use ecx_wallet::{DiscoveredAccount, SweepSummary};
 
 use crate::SplitterApp;
-use crate::state::{ChainStatus, DiscoveryPhase, Stage, profile_notice};
+use crate::state::{ChainStatus, DestinationChoice, DiscoveryPhase, Stage, profile_notice};
 
 /// Ticker for the selected chain. Small thing, but showing "BTC" while scanning Bitcoin and
 /// "ECX" while scanning ECX removes a real source of confusion (§10).
@@ -329,6 +329,17 @@ pub fn body(app: &SplitterApp, cx: &mut Context<SplitterApp>) -> AnyElement {
         Stage::Accounts {
             accounts, selected, ..
         } => accounts_view(app, accounts, *selected, cx),
+        Stage::ChoosingDestination {
+            account, choice, ..
+        } => destination_card(app, account, choice, cx),
+        Stage::Building { .. } => busy_card(
+            cx,
+            "Building the transaction…",
+            "Re-scanning the account and selecting every UTXO to sweep.",
+        ),
+        Stage::Review {
+            account, summary, ..
+        } => review_card(app, account, summary, cx),
     }
 }
 
@@ -664,6 +675,36 @@ fn accounts_view(
                 .enumerate()
                 .map(|(i, account)| account_row(account, i, selected == Some(i), profile, cx)),
         )
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap_3()
+                .pt_2()
+                .child(
+                    Button::new("continue")
+                        .primary()
+                        .label("Continue")
+                        .disabled(
+                            selected
+                                .and_then(|i| accounts.get(i))
+                                .is_none_or(|a| !a.is_splittable()),
+                        )
+                        .on_click(cx.listener(|this, _, _window, cx| this.confirm_account(cx))),
+                )
+                .children(
+                    selected
+                        .and_then(|i| accounts.get(i))
+                        .filter(|a| !a.is_splittable())
+                        .map(|_| {
+                            div()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child("That account has history but nothing left to spend.")
+                                .into_any_element()
+                        }),
+                ),
+        )
         .into_any_element()
 }
 
@@ -806,5 +847,425 @@ pub fn footer(app: &SplitterApp, cx: &App) -> AnyElement {
                 .map(|t| format!("{} · tip {}", app.profile().name, thousands(t)))
                 .unwrap_or_else(|| app.profile().name.to_string()),
         ))
+        .into_any_element()
+}
+
+// ---------------------------------------------------------------------------
+// Step 5 — destination
+// ---------------------------------------------------------------------------
+
+fn field(cx: &App, label: &str, value: impl Into<SharedString>) -> AnyElement {
+    div()
+        .flex()
+        .items_baseline()
+        .justify_between()
+        .gap_6()
+        .py_1p5()
+        .child(
+            div()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .flex_shrink_0()
+                .child(SharedString::from(label.to_string())),
+        )
+        .child(div().text_sm().child(value.into()))
+        .into_any_element()
+}
+
+fn destination_card(
+    app: &SplitterApp,
+    account: &DiscoveredAccount,
+    choice: &DestinationChoice,
+    cx: &mut Context<SplitterApp>,
+) -> AnyElement {
+    let profile = app.profile();
+    let ready = choice.address().is_some();
+    let pasted = choice.is_pasted();
+
+    div()
+        .size_full()
+        .flex()
+        .flex_col()
+        .gap_4()
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(
+                    div()
+                        .text_base()
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .child("Where should the coins go?"),
+                )
+                .child(
+                    Button::new("back")
+                        .ghost()
+                        .small()
+                        .label("Back")
+                        .on_click(cx.listener(|this, _, _window, cx| this.back_to_accounts(cx))),
+                ),
+        )
+        .child(
+            div()
+                .p_4()
+                .rounded_lg()
+                .border_1()
+                .border_color(cx.theme().border)
+                .bg(cx.theme().secondary.opacity(0.3))
+                .child(field(cx, "Splitting from", account.label()))
+                .child(field(cx, "Balance", amount(account.balance, profile))),
+        )
+        .child(banner(
+            cx,
+            IconName::TriangleAlert,
+            cx.theme().warning,
+            "An ECX address looks exactly like a Bitcoin address",
+            "Nothing in the string identifies the chain, so we cannot warn you if you paste an exchange deposit address — and no exchange accepts ECX deposits. Coins sent there are unrecoverable.",
+        ))
+        .child(destination_choice_block(app, choice, cx))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    Button::new("build")
+                        .primary()
+                        .label("Build transaction")
+                        .disabled(!ready)
+                        .on_click(cx.listener(|this, _, _window, cx| this.build_sweep(cx))),
+                )
+                .child(
+                    Button::new("switch-dest")
+                        .ghost()
+                        .small()
+                        .label(if pasted {
+                            "Use my device instead"
+                        } else {
+                            "Paste an address instead"
+                        })
+                        .on_click(cx.listener(move |this, _, _window, cx| {
+                            if pasted {
+                                this.use_device_destination(cx);
+                            } else {
+                                this.use_pasted_address(cx);
+                            }
+                        })),
+                ),
+        )
+        .into_any_element()
+}
+
+fn destination_choice_block(
+    app: &SplitterApp,
+    choice: &DestinationChoice,
+    cx: &mut Context<SplitterApp>,
+) -> AnyElement {
+    match choice {
+        DestinationChoice::Pending => div()
+            .flex()
+            .items_center()
+            .gap_3()
+            .p_4()
+            .rounded_lg()
+            .border_1()
+            .border_color(cx.theme().border)
+            .child(Spinner::new().small().color(cx.theme().primary))
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("Reading the destination account from your device…"),
+            )
+            .into_any_element(),
+
+        DestinationChoice::Device { address, path } => div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_4()
+            .rounded_lg()
+            .border_1()
+            .border_color(cx.theme().success.opacity(0.5))
+            .bg(cx.theme().success.opacity(0.06))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        Icon::new(IconName::CircleCheck)
+                            .xsmall()
+                            .text_color(cx.theme().success),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .child("A fresh account on your device"),
+                    ),
+            )
+            .child(div().text_sm().child(SharedString::from(address.to_string())))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(SharedString::from(format!(
+                        "{path} — never used on Bitcoin, and it must stay ECX-only forever"
+                    ))),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().warning)
+                    .child("Derived locally from the device xpub. Verifying it on the device screen needs a registered Ledger wallet policy, which is not implemented yet."),
+            )
+            .into_any_element(),
+
+        DestinationChoice::Pasted { parsed, acknowledged } => {
+            let ack = *acknowledged;
+            div()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .p_4()
+                .rounded_lg()
+                .border_1()
+                .border_color(cx.theme().border)
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .child("Paste an address"),
+                )
+                .child(gpui_component::input::Input::new(app.address_input()))
+                .child(
+                    Button::new("parse")
+                        .outline()
+                        .small()
+                        .label("Use this address")
+                        .on_click(cx.listener(|this, _, _window, cx| this.use_pasted_address(cx))),
+                )
+                .children(parsed.as_ref().map(|addr| {
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(div().text_sm().child(SharedString::from(addr.to_string())))
+                        .child(
+                            Button::new("ack")
+                                .map(|b| if ack { b.primary() } else { b.outline() })
+                                .small()
+                                .label(if ack {
+                                    "Acknowledged — this is an eCash address I control"
+                                } else {
+                                    "I confirm this is an eCash address I control"
+                                })
+                                .on_click(cx.listener(|this, _, _window, cx| {
+                                    this.toggle_acknowledgement(cx)
+                                })),
+                        )
+                        .into_any_element()
+                }))
+                .into_any_element()
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Step 6 — review. "The confirmation screen is the product" (§10).
+// ---------------------------------------------------------------------------
+
+fn review_card(
+    app: &SplitterApp,
+    account: &DiscoveredAccount,
+    summary: &SweepSummary,
+    cx: &mut Context<SplitterApp>,
+) -> AnyElement {
+    let profile = app.profile();
+    let psbt_for_clipboard = summary.psbt_base64.clone();
+    let has_prev = summary.has_prev_txs;
+
+    div()
+        .id("review")
+        .size_full()
+        .flex()
+        .flex_col()
+        .gap_4()
+        .overflow_y_scroll()
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(
+                    div()
+                        .text_base()
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .child("Review the transaction"),
+                )
+                .child(
+                    Button::new("back-review")
+                        .ghost()
+                        .small()
+                        .label("Back")
+                        .on_click(cx.listener(|this, _, _window, cx| this.back_to_accounts(cx))),
+                ),
+        )
+        .child(banner(
+            cx,
+            IconName::TriangleAlert,
+            cx.theme().warning,
+            "This spends on eCash, not on Bitcoin",
+            "Your device will display \"Bitcoin\" and BTC amounts — it has no way not to, because ECX is byte-identical to Bitcoin. The locktime below is the only thing that makes this an eCash transaction.",
+        ))
+        .child(
+            div()
+                .p_4()
+                .rounded_lg()
+                .border_1()
+                .border_color(cx.theme().border)
+                .bg(cx.theme().secondary.opacity(0.3))
+                .child(field(cx, "From", account.label()))
+                .child(field(cx, "To", summary.destination.clone()))
+                .child(field(cx, "Inputs swept", format!("{}", summary.input_count)))
+                .child(field(cx, "Total in", amount(summary.total_in, profile)))
+                .child(field(cx, "Sending", amount(summary.sending, profile)))
+                .child(field(cx, "Fee", amount(summary.fee, profile)))
+                .child(field(cx, "Device", format!("{}", summary.fingerprint))),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .p_4()
+                .rounded_lg()
+                .border_1()
+                .border_color(cx.theme().primary.opacity(0.4))
+                .bg(cx.theme().primary.opacity(0.05))
+                .child(
+                    div()
+                        .flex()
+                        .items_baseline()
+                        .justify_between()
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child("nLockTime"),
+                        )
+                        .child(
+                            div()
+                                .text_lg()
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .child(SharedString::from(summary.locktime.to_string())),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("eCash treats this value as final; Bitcoin reads it as a block height ~500 million in the future and will never relay or mine it. That asymmetry is the replay protection."),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_1p5()
+                        .child(
+                            Icon::new(if has_prev {
+                                IconName::CircleCheck
+                            } else {
+                                IconName::TriangleAlert
+                            })
+                            .xsmall()
+                            .text_color(if has_prev {
+                                cx.theme().success
+                            } else {
+                                cx.theme().danger
+                            }),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(if has_prev {
+                                    "Every non-taproot input carries its previous transaction"
+                                } else {
+                                    "Missing previous transactions — a Trezor would refuse to sign this"
+                                }),
+                        ),
+                ),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child("Unsigned PSBT (base64)"),
+                        )
+                        .child(
+                            Button::new("copy-psbt")
+                                .ghost()
+                                .xsmall()
+                                .label("Copy")
+                                .on_click(move |_, _window, cx| {
+                                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                        psbt_for_clipboard.clone(),
+                                    ));
+                                }),
+                        ),
+                )
+                .child(
+                    div()
+                        .id("psbt")
+                        .max_h(px(150.0))
+                        .overflow_y_scroll()
+                        .p_3()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(cx.theme().border)
+                        .bg(cx.theme().secondary.opacity(0.4))
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(SharedString::from(summary.psbt_base64.clone())),
+                ),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .p_4()
+                .rounded_lg()
+                .border_1()
+                .border_color(cx.theme().border)
+                .child(
+                    Button::new("sign")
+                        .primary()
+                        .label("Sign on device")
+                        .disabled(true),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(SharedString::from(format!(
+                            "Signing is disabled until eCash activates at block {}. Until then the chains are identical, the fork probe cannot clear any endpoint, and a signed transaction would have nowhere valid to go.",
+                            thousands(ECASH_HEIGHT)
+                        ))),
+                ),
+        )
         .into_any_element()
 }

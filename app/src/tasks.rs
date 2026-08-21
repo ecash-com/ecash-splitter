@@ -109,3 +109,43 @@ async fn discovery_inner(
     let _ = tx.send(Progress::Done(accounts));
     Ok(())
 }
+
+/// Derive the ECX destination address from the device.
+///
+/// This is public-key math done locally — the device is only asked for an xpub. It is **not**
+/// the same as the user verifying the address on the device screen, which needs a registered
+/// Ledger wallet policy (`CLAUDE.md` §5.3).
+pub async fn derive_destination() -> Result<(bitcoin::Address, String), String> {
+    let signer = LedgerSigner::connect().map_err(|e| e.to_string())?;
+    let path = ecx_wallet::build::destination_account_path();
+    let xpub = signer
+        .extended_pubkey(&path)
+        .await
+        .map_err(|e| format!("reading {path}: {e}"))?;
+    let address = ecx_wallet::device_destination(&xpub).map_err(|e| e.to_string())?;
+    Ok((address, format!("{path}/0/0")))
+}
+
+/// Build the sweep and summarize it for the review screen. Stops short of signing.
+pub async fn build_sweep_summary(
+    profile: ChainProfile,
+    account: ecx_wallet::DiscoveredAccount,
+    destination: bitcoin::Address,
+    fingerprint: bitcoin::bip32::Fingerprint,
+) -> Result<ecx_wallet::SweepSummary, String> {
+    let chain = EsploraChain::new(profile).map_err(|e| e.to_string())?;
+    let tip = chain.tip().await.map_err(|e| e.to_string())?;
+    let readiness = ScanReadiness::assess(tip, now_unix());
+
+    let psbt = ecx_wallet::build_sweep(
+        &chain,
+        readiness,
+        &account,
+        &destination,
+        ecx_wallet::build::DEFAULT_FEERATE_SAT_PER_VB,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    ecx_wallet::summarize(&psbt, &destination, fingerprint).map_err(|e| e.to_string())
+}
