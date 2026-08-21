@@ -10,6 +10,9 @@ signed bytes, broadcasts to ECX, and hands off to a real ECX wallet.
 > alpha/beta coins are destroyed and re-issued at full launch (973,728, 2026-10-31). Do not treat
 > anything this produces before then as durable value.
 
+[`docs/support-status.md`](docs/support-status.md) tracks what works today, what does not, and
+what each missing piece needs.
+
 Read [`CLAUDE.md`](CLAUDE.md) before changing anything. It is the project bible: the golden rules,
 the verified ECX consensus facts, the hardware-wallet reality check, and the decisions already
 settled.
@@ -19,7 +22,8 @@ settled.
 ```sh
 cargo build
 cargo test --workspace
-cargo run -p ecash-splitter
+cargo run -p ecash-splitter            # desktop app
+cargo run -p ecash-splitter-cli -- --help   # `ecx` command line
 ```
 
 **macOS also needs the Metal Toolchain** (GPUI compiles Metal shaders in a build script):
@@ -39,6 +43,7 @@ xcodebuild -showComponent MetalToolchain         # expect: Status: installed
 | `crates/ecx-wallet` | Watch-only descriptors, account discovery, PSBT construction via BDK. |
 | `crates/ecx-split` | The split plan: enumerate, order, build, verify, broadcast, track. |
 | `app` | GPUI desktop shell. Performs no I/O. |
+| `cli` | `ecx` — the same flow on the command line. Shares `ecx-split` with the desktop app. |
 
 Dependency direction is `app → ecx-split → {ecx-wallet, ecx-signer, ecx-chain} → ecx-core`.
 Nothing depends upward.
