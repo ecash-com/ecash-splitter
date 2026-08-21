@@ -1,0 +1,6 @@
+# Pinned deliberately: reproducible builds are a release requirement (CLAUDE.md §11).
+# macOS additionally needs the Metal Toolchain for gpui's shader build script:
+#   xcodebuild -downloadComponent MetalToolchain
+[toolchain]
+channel = "1.94.0"
+components = ["rustfmt", "clippy"]

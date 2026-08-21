@@ -1,0 +1,11 @@
+[package]
+name = "ecx-core"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "ECX consensus facts and the transaction invariants. Pure: no I/O, no async, no UI."
+
+[dependencies]
+bitcoin.workspace = true
+thiserror.workspace = true

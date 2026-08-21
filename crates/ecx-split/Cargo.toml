@@ -1,0 +1,15 @@
+[package]
+name = "ecx-split"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The split plan: enumerate, order, build, verify, broadcast, track."
+
+[dependencies]
+ecx-core.workspace = true
+ecx-chain.workspace = true
+ecx-signer.workspace = true
+ecx-wallet.workspace = true
+bitcoin.workspace = true
+thiserror.workspace = true

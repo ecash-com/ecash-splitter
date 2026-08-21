@@ -1,0 +1,13 @@
+[package]
+name = "ecx-wallet"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Watch-only descriptors, account discovery, and PSBT construction via BDK."
+
+[dependencies]
+ecx-core.workspace = true
+ecx-chain.workspace = true
+bitcoin.workspace = true
+thiserror.workspace = true

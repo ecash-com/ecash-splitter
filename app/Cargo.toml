@@ -1,0 +1,23 @@
+[package]
+name = "ecash-splitter"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Split BTC to ECX from a hardware wallet."
+
+[[bin]]
+name = "ecash-splitter"
+path = "src/main.rs"
+
+[dependencies]
+ecx-core.workspace = true
+ecx-chain.workspace = true
+ecx-signer.workspace = true
+ecx-wallet.workspace = true
+ecx-split.workspace = true
+
+# crates.io only — NOT git. See CLAUDE.md §4; this is the verified reproducible configuration.
+gpui = "0.2.2"
+gpui-component = "0.5.1"
+gpui-component-assets = "0.5.1"

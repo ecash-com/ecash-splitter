@@ -1,0 +1,27 @@
+[workspace]
+resolver = "3"
+members = ["crates/ecx-core", "crates/ecx-chain", "crates/ecx-signer", "crates/ecx-wallet", "crates/ecx-split", "app"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+
+# Everything resolves to bitcoin 0.32 — see CLAUDE.md §4. A bump that splits this
+# version is a breaking architectural change, not a routine update.
+[workspace.dependencies]
+bitcoin = "0.32"
+bdk_wallet = "3.1.0"
+bdk_esplora = { version = "0.22.2", features = ["async-https", "tokio"] }
+async-hwi = "0.0.32"
+trezor-client = { version = "0.1.6", features = ["bitcoin"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+async-trait = "0.1"
+thiserror = "2"
+tracing = "0.1"
+
+ecx-core = { path = "crates/ecx-core" }
+ecx-chain = { path = "crates/ecx-chain" }
+ecx-signer = { path = "crates/ecx-signer" }
+ecx-wallet = { path = "crates/ecx-wallet" }
+ecx-split = { path = "crates/ecx-split" }

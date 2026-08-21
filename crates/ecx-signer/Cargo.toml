@@ -1,0 +1,13 @@
+[package]
+name = "ecx-signer"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Hardware wallet abstraction: async-hwi, trezor-client, and air-gapped PSBT."
+
+[dependencies]
+ecx-core.workspace = true
+bitcoin.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true

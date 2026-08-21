@@ -1,0 +1,13 @@
+[package]
+name = "ecx-chain"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "ECX chain sources, the fork probe, and the sync gate."
+
+[dependencies]
+ecx-core.workspace = true
+bitcoin.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
