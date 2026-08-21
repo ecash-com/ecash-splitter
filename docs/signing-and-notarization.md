@@ -49,12 +49,28 @@ the sandbox, and should not opt into it.
 
 | | |
 |---|---|
-| Apple Developer Program | **$99/year.** Individual enrolment is far less painful than organisational — Liana's notes say so explicitly. Expect government-ID KYC and a wait |
+| Apple Developer Program | **Already have one** — the same account signs eCash.com Wallet (`../ecash-wallet-mobile`, bundle `com.ecash.mobile.wallet`). No enrolment wait, no extra $99 |
 | Certificate | **Developer ID Application** (for distribution outside the App Store), profile type **G2 Sub-CA** |
 | CSR | Apple asks for one generated on a Mac. It can be generated with OpenSSL instead — RSA 2048, no choice in size or type |
 | Runtime | Hardened runtime, `--code-signature-flags runtime` |
 | Notarization | Submit to Apple's notary service, then **staple** the ticket |
 | API key | From **App Store Connect**, *not* from the developer account's "Keys" page. This trips people up |
+
+### What carries over from eCash.com Wallet, and what does not
+
+The **account and team carry over**; the certificate does not.
+
+- The mobile app is distributed through the **App Store**, which uses an *Apple Distribution*
+  certificate. A desktop app shipped outside the store needs a **Developer ID Application**
+  certificate — same team, different certificate type, and it has to be created.
+- `../ecash-wallet-mobile/Darwin/fastlane/apikey.json` is an **App Store Connect API key**, which
+  is exactly the kind notarization wants. It may be reusable directly; check its scope, since a
+  key limited to app distribution may not cover the notary service.
+- Pick a bundle identifier in the same namespace — `com.ecash.splitter` alongside
+  `com.ecash.mobile.wallet`.
+
+That reduces the macOS work to: create the Developer ID cert, confirm the API key's scope, and
+wire `rcodesign` into CI.
 
 ### Tooling
 
@@ -148,13 +164,15 @@ version needs pinning too.
 
 ## Order of work
 
-1. **Answer the Azure Trusted Signing eligibility question.** It determines the Windows budget
-   and it is a business question, not a technical one.
-2. **Apple Developer enrolment** — $99 and a KYC wait, so start it early; it blocks nothing else.
+1. **Answer the Azure Trusted Signing eligibility question.** It determines the Windows budget,
+   it is a business question rather than a technical one, and it is now the only item with a
+   real lead time.
+2. **Create a Developer ID Application certificate** on the existing team, and check whether the
+   mobile project's App Store Connect API key covers the notary service.
 3. **Get an unsigned build working on Linux and Windows at all.** Neither has ever been built.
    Signing an app that does not run is premature.
 4. **macOS signing via `rcodesign` in CI**, then verify HID on a clean machine with a real device.
 5. **Windows signing.**
 6. **Reproducible build documentation** and a signatures repository.
 
-Steps 1 and 2 have lead times measured in days and cost nothing to start.
+macOS is now the cheap half: the account exists, so it is a certificate and some CI wiring.
