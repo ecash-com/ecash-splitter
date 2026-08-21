@@ -132,6 +132,13 @@ fallback preset.
 
 ### Known gaps inside working steps
 
+- **A USB HID device can only be open once.** Signing needs a second connection, because Ledger's
+  wallet policy can only be set at construction and the account is not known until discovery has
+  run. The first connection must be dropped before the second is opened, or it fails with
+  "device not found" — which reads as unplugged and actually means *already in use by us*. The
+  GUI reconnects per operation and so has never hit this; anything holding a handle across steps
+  will.
+
 - **`BITCOIN_HASH_AT_FORK` is `None`.** The fork probe cannot run until Bitcoin mines block
   963,648 — below that height the two chains are byte-identical and no probe can distinguish
   them. Fill it in from a trusted Bitcoin source once the height is reached.

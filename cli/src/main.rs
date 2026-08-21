@@ -422,11 +422,19 @@ async fn run(command: &str, args: &[String]) -> Result<(), String> {
                 return Ok(());
             }
 
-            // Ledger will not sign without its wallet policy, so reconnect carrying one. Every
-            // other backend ignores it.
+            // Ledger will not sign without its wallet policy, and the policy can only be set at
+            // construction — so signing needs a second connection. The account is not known
+            // until discovery has run, which is why it cannot simply be set on the first one.
+            //
+            // Drop the discovery connection first. A USB HID device can be open once; holding
+            // both handles makes the second open fail with "device not found", which reads as
+            // "unplugged" and is really "already in use by us".
+            let policy = account.ledger_policy();
+            drop(signer);
+
             println!();
             println!("confirm on your device…");
-            let signing = ecx_signer::connect_for_signing(kind, &account.ledger_policy())
+            let signing = ecx_signer::connect_for_signing(kind, &policy)
                 .await
                 .map_err(|e| e.to_string())?;
 
