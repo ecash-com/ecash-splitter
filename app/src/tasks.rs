@@ -73,29 +73,35 @@ async fn discovery_inner(
     let label = device_label(signer.kind());
 
     let tx_events = tx.clone();
-    let (_, accounts) = ecx_split::discover(&chain, signer.as_ref(), label, move |event| {
-        let progress = match event {
-            SplitEvent::Connected(id) => Progress::Connected(DeviceSession {
-                kind: id.kind,
-                label: id.label,
-                version: id.version,
-                fingerprint: id.fingerprint,
-            }),
-            SplitEvent::ReadingKeys { done, total, label } => Progress::Step {
-                phase: DiscoveryPhase::ReadingKeys,
-                scanned: done,
-                total,
-                label,
-            },
-            SplitEvent::Scanning { done, total, label } => Progress::Step {
-                phase: DiscoveryPhase::Scanning,
-                scanned: done,
-                total,
-                label,
-            },
-        };
-        let _ = tx_events.send(progress);
-    })
+    let (_, accounts) = ecx_split::discover(
+        &chain,
+        signer.as_ref(),
+        label,
+        ecx_wallet::DiscoveryDepth::default(),
+        move |event| {
+            let progress = match event {
+                SplitEvent::Connected(id) => Progress::Connected(DeviceSession {
+                    kind: id.kind,
+                    label: id.label,
+                    version: id.version,
+                    fingerprint: id.fingerprint,
+                }),
+                SplitEvent::ReadingKeys { done, total, label } => Progress::Step {
+                    phase: DiscoveryPhase::ReadingKeys,
+                    scanned: done,
+                    total,
+                    label,
+                },
+                SplitEvent::Scanning { done, total, label } => Progress::Step {
+                    phase: DiscoveryPhase::Scanning,
+                    scanned: done,
+                    total,
+                    label,
+                },
+            };
+            let _ = tx_events.send(progress);
+        },
+    )
     .await
     .map_err(|e| e.to_string())?;
 

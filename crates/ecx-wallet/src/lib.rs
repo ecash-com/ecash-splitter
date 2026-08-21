@@ -10,7 +10,7 @@ pub mod discovery;
 pub mod import;
 
 pub use build::{BuildError, SweepSummary, build_sweep, device_destination, summarize};
-pub use discovery::{DiscoveryProgress, WalletError, discover};
+pub use discovery::{DiscoveryDepth, DiscoveryProgress, WalletError, discover};
 pub use import::{ImportError, ImportedAccount, parse_account_export};
 
 /// ECX has no SLIP-44 coin type of its own, so everything derives under Bitcoin's `0'`

@@ -76,6 +76,22 @@ impl ChainProfile {
         matches!(self.kind, ProfileKind::Ecx | ProfileKind::Custom)
     }
 
+    /// Ticker for amounts on this chain.
+    ///
+    /// Lives here rather than in a frontend so the GUI and the CLI cannot disagree about what
+    /// they are counting.
+    pub fn ticker(&self) -> &'static str {
+        match self.kind {
+            ProfileKind::Ecx | ProfileKind::Custom => "ECX",
+            ProfileKind::BitcoinReadOnly => "BTC",
+        }
+    }
+
+    /// Format an amount with this chain's ticker.
+    pub fn format(&self, amount: bitcoin::Amount) -> String {
+        format!("{:.8} {}", amount.to_btc(), self.ticker())
+    }
+
     pub fn is_custom(&self) -> bool {
         matches!(self.kind, ProfileKind::Custom)
     }

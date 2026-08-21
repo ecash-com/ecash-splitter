@@ -13,7 +13,7 @@ use ecx_chain::{BroadcastPermit, ChainSource, EsploraChain, ScanReadiness, TipIn
 use ecx_core::{EcxPsbt, TxIntent};
 use ecx_signer::{DeviceKind, SignedTx, Signer};
 use ecx_wallet::{
-    AccountCandidate, DEFAULT_ACCOUNTS_PROBED, DiscoveredAccount, SweepSummary, candidates,
+    AccountCandidate, DiscoveredAccount, DiscoveryDepth, SweepSummary, candidates,
     discover as scan_accounts,
 };
 
@@ -133,12 +133,13 @@ pub async fn discover(
     chain: &EsploraChain,
     signer: &dyn Signer,
     device_label: String,
+    depth: DiscoveryDepth,
     mut on_event: impl FnMut(SplitEvent),
 ) -> Result<(DeviceIdentity, Vec<DiscoveredAccount>), SplitError> {
     let identity = identify(signer, device_label).await?;
     on_event(SplitEvent::Connected(identity.clone()));
 
-    let candidates: Vec<AccountCandidate> = candidates(DEFAULT_ACCOUNTS_PROBED);
+    let candidates: Vec<AccountCandidate> = candidates(depth.accounts);
     let total = candidates.len();
     let mut xpubs = Vec::with_capacity(total);
     for (done, candidate) in candidates.iter().enumerate() {
@@ -152,7 +153,7 @@ pub async fn discover(
     }
 
     let (_, readiness) = chain_status(chain).await?;
-    let accounts = scan_accounts(chain, readiness, identity.fingerprint, &xpubs, |p| {
+    let accounts = scan_accounts(chain, readiness, identity.fingerprint, &xpubs, depth, |p| {
         on_event(SplitEvent::Scanning {
             done: p.scanned,
             total: p.total,
@@ -184,13 +185,20 @@ pub async fn discover_from_export(
 
     let xpubs = ecx_wallet::import::to_candidates(accounts);
     let (_, readiness) = chain_status(chain).await?;
-    let found = scan_accounts(chain, readiness, fingerprint, &xpubs, |p| {
-        on_event(SplitEvent::Scanning {
-            done: p.scanned,
-            total: p.total,
-            label: format!("{} {}", p.current.kind.label(), p.current.path),
-        });
-    })
+    let found = scan_accounts(
+        chain,
+        readiness,
+        fingerprint,
+        &xpubs,
+        DiscoveryDepth::default(),
+        |p| {
+            on_event(SplitEvent::Scanning {
+                done: p.scanned,
+                total: p.total,
+                label: format!("{} {}", p.current.kind.label(), p.current.path),
+            });
+        },
+    )
     .await?;
 
     Ok((fingerprint, found))

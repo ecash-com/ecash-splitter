@@ -42,6 +42,38 @@ pub enum WalletError {
     NotSynced { tip: u32, age_secs: u64 },
 }
 
+/// How far to look.
+///
+/// Two independent depths, easy to confuse:
+///
+/// - `accounts` — how many **account indices** to probe per script type. `m/84'/0'/0'`,
+///   `.../1'`, `.../2'` and so on. Three covers the overwhelming majority; someone who created
+///   an account further out needs this raised or their coins are invisible.
+/// - `stop_gap` — how many consecutive **unused addresses** inside one account end the scan.
+///   Twenty is the BIP44 convention. Raising it helps a wallet that skipped addresses; it does
+///   not help find a missing account.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DiscoveryDepth {
+    pub accounts: u32,
+    pub stop_gap: usize,
+}
+
+impl Default for DiscoveryDepth {
+    fn default() -> Self {
+        Self {
+            accounts: crate::DEFAULT_ACCOUNTS_PROBED,
+            stop_gap: STOP_GAP,
+        }
+    }
+}
+
+impl DiscoveryDepth {
+    /// Candidates this depth produces: four script types × `accounts`.
+    pub fn candidate_count(&self) -> usize {
+        crate::ScriptKind::ALL.len() * self.accounts as usize
+    }
+}
+
 /// Progress for the UI. Discovery takes tens of seconds, so it must be narratable.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiscoveryProgress {
@@ -59,6 +91,7 @@ async fn scan_one(
     candidate: &AccountCandidate,
     fingerprint: Fingerprint,
     xpub: &Xpub,
+    stop_gap: usize,
 ) -> Result<Option<DiscoveredAccount>, WalletError> {
     let (external, internal) = descriptor_pair(candidate, fingerprint, xpub);
 
@@ -71,7 +104,7 @@ async fn scan_one(
     // Route through the chain so the error is a phrase, not a paragraph of reqwest debug.
     let update = chain
         .client()
-        .full_scan::<KeychainKind, _>(request, STOP_GAP, PARALLEL_REQUESTS)
+        .full_scan::<KeychainKind, _>(request, stop_gap, PARALLEL_REQUESTS)
         .await
         .map_err(|e| WalletError::Scan(chain.describe_error(*e).to_string()))?;
     wallet
@@ -102,6 +135,7 @@ pub async fn discover(
     readiness: ScanReadiness,
     fingerprint: Fingerprint,
     xpubs: &[(AccountCandidate, Xpub)],
+    depth: DiscoveryDepth,
     mut on_progress: impl FnMut(DiscoveryProgress),
 ) -> Result<Vec<DiscoveredAccount>, WalletError> {
     guard_synced(readiness)?;
@@ -115,7 +149,8 @@ pub async fn discover(
             total,
             current: candidate.clone(),
         });
-        if let Some(account) = scan_one(chain, candidate, fingerprint, xpub).await? {
+        if let Some(account) = scan_one(chain, candidate, fingerprint, xpub, depth.stop_gap).await?
+        {
             found.push(account);
         }
     }

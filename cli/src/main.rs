@@ -31,6 +31,11 @@ COMMANDS:
 
 OPTIONS:
     --endpoint <URL>            Esplora base URL (default: the ECX alpha preset)
+    --accounts <N>              Account indices to probe per address type (default: 3).
+                                Raise this if an account was created further out; four
+                                address types x N accounts are read from the device.
+    --gap <N>                   Unused addresses that end a scan within one account
+                                (default: 20). Raising this does not find missing accounts.
     --feerate <SAT_PER_VB>      Fee rate for `build`/`sign` (default: 1)
     --psbt-out <FILE>           Also write the unsigned PSBT here, to inspect elsewhere
     --yes                       Skip the confirmation prompt (scripting only)
@@ -48,6 +53,25 @@ fn has(args: &[String], name: &str) -> bool {
 fn flag(args: &[String], name: &str) -> Option<String> {
     let i = args.iter().position(|a| a == name)?;
     args.get(i + 1).cloned()
+}
+
+/// How far to look. Two independent depths, so both are exposed.
+fn depth(args: &[String]) -> Result<ecx_wallet::DiscoveryDepth, String> {
+    let mut d = ecx_wallet::DiscoveryDepth::default();
+    if let Some(v) = flag(args, "--accounts") {
+        d.accounts = v
+            .parse()
+            .map_err(|_| "--accounts must be a whole number".to_string())?;
+        if d.accounts == 0 {
+            return Err("--accounts must be at least 1".into());
+        }
+    }
+    if let Some(v) = flag(args, "--gap") {
+        d.stop_gap = v
+            .parse()
+            .map_err(|_| "--gap must be a whole number".to_string())?;
+    }
+    Ok(d)
 }
 
 fn profile(args: &[String]) -> ChainProfile {
@@ -110,7 +134,11 @@ fn find_account<'a>(
         .ok_or_else(|| format!("no discovered account at {path}"))
 }
 
-fn print_accounts(accounts: &[ecx_wallet::DiscoveredAccount], numbered: bool) {
+fn print_accounts(
+    accounts: &[ecx_wallet::DiscoveredAccount],
+    profile: &ChainProfile,
+    numbered: bool,
+) {
     if numbered {
         println!(
             "{:<4} {:<16} {:<14} {:>14}  UTXOS",
@@ -124,7 +152,7 @@ fn print_accounts(accounts: &[ecx_wallet::DiscoveredAccount], numbered: bool) {
             "{:<16} {:<14} {:>14}  {}",
             a.candidate.kind.label(),
             a.candidate.path.to_string(),
-            a.balance.to_string(),
+            profile.format(a.balance),
             a.utxo_count
         );
         if numbered {
@@ -144,9 +172,10 @@ fn print_accounts(accounts: &[ecx_wallet::DiscoveredAccount], numbered: bool) {
 
 /// Pick an account interactively, so the user does not have to run `discover` first and copy a
 /// path back in — which would mean reading twelve xpubs and scanning twelve accounts twice.
-fn choose_account(
-    accounts: &[ecx_wallet::DiscoveredAccount],
-) -> Result<&ecx_wallet::DiscoveredAccount, String> {
+fn choose_account<'a>(
+    accounts: &'a [ecx_wallet::DiscoveredAccount],
+    profile: &ChainProfile,
+) -> Result<&'a ecx_wallet::DiscoveredAccount, String> {
     use std::io::{Write, stdin, stdout};
 
     let splittable: Vec<usize> = accounts
@@ -161,7 +190,7 @@ fn choose_account(
     }
 
     println!();
-    print_accounts(accounts, true);
+    print_accounts(accounts, profile, true);
     println!();
 
     if splittable.len() == 1 {
@@ -188,13 +217,17 @@ fn choose_account(
     Ok(account)
 }
 
-fn print_summary(account: &ecx_wallet::DiscoveredAccount, s: &ecx_wallet::SweepSummary) {
+fn print_summary(
+    account: &ecx_wallet::DiscoveredAccount,
+    s: &ecx_wallet::SweepSummary,
+    profile: &ChainProfile,
+) {
     println!("from        : {}", account.label());
     println!("to          : {}", s.destination);
     println!("inputs      : {}", s.input_count);
-    println!("total in    : {}", s.total_in);
-    println!("sending     : {}", s.sending);
-    println!("fee         : {}", s.fee);
+    println!("total in    : {}", profile.format(s.total_in));
+    println!("sending     : {}", profile.format(s.sending));
+    println!("fee         : {}", profile.format(s.fee));
     println!("nLockTime   : {}", s.locktime);
     println!(
         "prev txs    : {}",
@@ -203,12 +236,13 @@ fn print_summary(account: &ecx_wallet::DiscoveredAccount, s: &ecx_wallet::SweepS
 }
 
 /// Typed confirmation. Not a y/n — this spends every UTXO in an account.
-fn confirm(summary: &ecx_wallet::SweepSummary) -> Result<bool, String> {
+fn confirm(summary: &ecx_wallet::SweepSummary, profile: &ChainProfile) -> Result<bool, String> {
     use std::io::{Write, stdin, stdout};
     println!();
     println!(
         "This sweeps {} to {} on eCash.",
-        summary.sending, summary.destination
+        profile.format(summary.sending),
+        summary.destination
     );
     println!("Your device will display \"Bitcoin\" — it has no way not to.");
     print!("Type 'sign' to continue: ");
@@ -261,10 +295,11 @@ async fn run(command: &str, args: &[String]) -> Result<(), String> {
         }
 
         "discover" => {
-            let chain = EsploraChain::new(profile(args)).map_err(|e| e.to_string())?;
+            let profile = profile(args);
+            let chain = EsploraChain::new(profile.clone()).map_err(|e| e.to_string())?;
             let signer = ecx_signer::connect_any().await.map_err(|e| e.to_string())?;
             let label = format!("{:?}", signer.kind());
-            let (_, accounts) = discover(&chain, signer.as_ref(), label, render)
+            let (_, accounts) = discover(&chain, signer.as_ref(), label, depth(args)?, render)
                 .await
                 .map_err(|e| e.to_string())?;
 
@@ -273,7 +308,7 @@ async fn run(command: &str, args: &[String]) -> Result<(), String> {
                 println!("no accounts with history");
                 return Ok(());
             }
-            print_accounts(&accounts, false);
+            print_accounts(&accounts, &profile, false);
             Ok(())
         }
 
@@ -288,12 +323,14 @@ async fn run(command: &str, args: &[String]) -> Result<(), String> {
 
             let address = parse_address(&to)?;
 
-            let chain = EsploraChain::new(profile(args)).map_err(|e| e.to_string())?;
+            let profile = profile(args);
+            let chain = EsploraChain::new(profile.clone()).map_err(|e| e.to_string())?;
             let signer = ecx_signer::connect_any().await.map_err(|e| e.to_string())?;
             let label = format!("{:?}", signer.kind());
-            let (identity, accounts) = discover(&chain, signer.as_ref(), label, render)
-                .await
-                .map_err(|e| e.to_string())?;
+            let (identity, accounts) =
+                discover(&chain, signer.as_ref(), label, depth(args)?, render)
+                    .await
+                    .map_err(|e| e.to_string())?;
 
             let account = find_account(&accounts, &path)?;
 
@@ -342,18 +379,20 @@ async fn run(command: &str, args: &[String]) -> Result<(), String> {
                 .map_err(|_| "--feerate must be a whole number of sat/vB")?;
             let address = parse_address(&to)?;
 
-            let chain = EsploraChain::new(profile(args)).map_err(|e| e.to_string())?;
+            let profile = profile(args);
+            let chain = EsploraChain::new(profile.clone()).map_err(|e| e.to_string())?;
             let signer = ecx_signer::connect_any().await.map_err(|e| e.to_string())?;
             let kind = signer.kind();
             let label = format!("{kind:?}");
-            let (identity, accounts) = discover(&chain, signer.as_ref(), label, render)
-                .await
-                .map_err(|e| e.to_string())?;
+            let (identity, accounts) =
+                discover(&chain, signer.as_ref(), label, depth(args)?, render)
+                    .await
+                    .map_err(|e| e.to_string())?;
             // --account skips the prompt; without it, pick from the accounts we just scanned
             // rather than making the user run `discover` and repeat the whole sweep.
             let account = match flag(args, "--account") {
                 Some(path) => find_account(&accounts, &path)?,
-                None => choose_account(&accounts)?,
+                None => choose_account(&accounts, &profile)?,
             };
 
             let destination = Destination::Pasted {
@@ -366,7 +405,7 @@ async fn run(command: &str, args: &[String]) -> Result<(), String> {
                     .map_err(|e| e.to_string())?;
 
             println!();
-            print_summary(account, &built.summary);
+            print_summary(account, &built.summary, &profile);
             println!();
             println!("{}", built.summary.psbt_base64);
 
@@ -378,7 +417,7 @@ async fn run(command: &str, args: &[String]) -> Result<(), String> {
             }
 
             // Golden Rule 7 — nothing reaches the device without explicit confirmation.
-            if !has(args, "--yes") && !confirm(&built.summary)? {
+            if !has(args, "--yes") && !confirm(&built.summary, &profile)? {
                 println!("aborted; nothing was sent to the device");
                 return Ok(());
             }

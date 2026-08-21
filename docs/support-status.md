@@ -12,7 +12,7 @@ Key: ✅ works · 🟡 implemented, untested on hardware · ⛔ deliberately exc
 | | |
 |---|---|
 | **Frontends** | Desktop (GPUI) ✅ · CLI (`ecx`) ✅ — both share `ecx-split`, neither owns the flow |
-| **Flow** | Connect → discover → select → destination → build → review ✅ · **sign + verify ✅ in the CLI**, ❌ in the GUI · broadcast ❌ |
+| **Flow** | Connect → discover → select → destination → build → review ✅ · **sign + verify ✅ CLI, verified on a Ledger**, ❌ GUI · broadcast ❌ |
 | **Devices** | USB: Ledger ✅ · Coldcard 🟡 · Specter 🟡 · Jade 🟡 · Trezor 🟡 · BitBox02 ❌<br>Air-gap: **parked** — library exists, no UI |
 | **Chain** | Esplora ✅ · Electrum ❌ · compact-filter SPV ⛔ |
 | **Tests** | 52, all passing. 19 of them are the `ecx-core` invariant suite |
@@ -30,7 +30,7 @@ nowhere valid to go.
 
 | Device | Transport | Library | State |
 |---|---|---|---|
-| **Ledger** Nano S+ / X | USB HID | `async-hwi` | ✅ Verified against a real Nano X: connect, fingerprint, version, 12 account xpubs, full discovery |
+| **Ledger** Nano S+ / X | USB HID | `async-hwi` | ✅ Verified against a real Nano X (app 2.5.0): connect, fingerprint, 12 account xpubs, discovery, and sweep construction through to the confirmation prompt |
 | **Coldcard** | USB HID | `async-hwi` | 🟡 Implemented, never run against hardware |
 | **Specter DIY** | Serial | `async-hwi` | 🟡 Implemented, never run against hardware |
 | **Jade** | Serial | `async-hwi` | 🟡 Implemented, never run against hardware. Unlock relays to Blockstream's blind PIN oracle — see below |
@@ -120,7 +120,7 @@ fallback preset.
 |---|---|
 | 1. Chain status + sync gate | ✅ Freshness-based; refuses to report a balance from a lagging indexer |
 | 2. Connect device | ✅ Enumerates across all four backends |
-| 3. Discover accounts | ✅ 12 candidates — 4 script types × 3 account indices, gap limit 20 |
+| 3. Discover accounts | ✅ 4 script types × 3 account indices by default, gap limit 20. CLI exposes `--accounts` and `--gap`; the GUI does not yet |
 | 4. Select account | ✅ |
 | 5. Destination | ✅ Pasted (default, behind a typed acknowledgement) or device-derived at `m/84'/0'/1'` |
 | 6. Build + review | ✅ Sweep PSBT, full breakdown, unsigned PSBT shown and copyable |
@@ -139,7 +139,10 @@ fallback preset.
   (`register_wallet` + persisted HMAC) for anything but BIP86. Until then a device-derived
   destination cannot be confirmed on the device screen, which is why pasting is the default
   (§7.5).
-- **Fee rate is fixed at 1 sat/vB**, with a 200,000 sat absolute cap. No user override.
+- **Fee rate is fixed at 1 sat/vB** in the GUI, with a 200,000 sat absolute cap. The CLI has
+  `--feerate`.
+- **Search depth is not adjustable in the GUI.** An account created beyond index 2 is invisible
+  there; the CLI has `--accounts`.
 - **Passphrase wallets** are not surfaced. A passphrase yields a different fingerprint and a
   completely different account set; the app neither asks about one nor supports rescanning per
   passphrase (§5.6).
