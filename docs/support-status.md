@@ -144,6 +144,7 @@ fallback preset.
 |---|---|
 | 1. Chain status + sync gate | ✅ Freshness-based; refuses to report a balance from a lagging indexer |
 | 2. Connect device | ✅ Enumerates across all four backends |
+| 3a. Classify coins | 🟡 `ecx check` asks Bitcoin whether each coin is genuinely shared. CLI only; does not yet filter the sweep. See [`coin-detection.md`](coin-detection.md) |
 | 3. Discover accounts | ✅ 4 script types × 3 account indices by default, gap limit 20. Depth adjustable in both frontends: `--accounts` / `--gap`, and preset buttons in the GUI |
 | 4. Select account | ✅ |
 | 5. Destination | ✅ Pasted (default, behind a typed acknowledgement) or device-derived at `m/84'/0'/1'` |

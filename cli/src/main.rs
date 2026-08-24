@@ -20,30 +20,37 @@ USAGE:
 
 COMMANDS:
     devices                     List connected hardware wallets
-    status                      Show the chain endpoint's tip and whether it is caught up
-    discover                    Find accounts with history on the connected device
+    status                      Chain tip, whether it is caught up, and how far off the fork is
+    discover                    Find accounts with coins on the connected device
+    check [--account <PATH>]    Ask Bitcoin which coins are genuinely shared and need
+                                splitting. Read-only
     build --account <PATH> --to <ADDRESS>
                                 Build the sweep PSBT for one account and print it
     sign --to <ADDRESS> [--account <PATH>]
                                 Build, show the PSBT, confirm, sign on the device, and
-                                verify the result. Prompts for the account unless
-                                --account is given. Does NOT broadcast.
+                                verify the result. Add --broadcast to publish it.
+                                Prompts for the account unless --account is given
+    broadcast --tx <HEX>        Publish a transaction signed earlier
+    track --txid <TXID>         How deeply buried a broadcast transaction is
 
 OPTIONS:
-    --endpoint <URL>            Esplora base URL (default: the ECX alpha preset)
+    --endpoint <URL>            eCash Esplora base URL (default: the ECX alpha preset)
+    --bitcoin <URL>             Bitcoin Esplora for `check` (default: blockstream.info)
     --accounts <N>              Account indices to probe per address type (default: 3).
                                 Raise this if an account was created further out; four
-                                address types x N accounts are read from the device.
+                                address types x N accounts are read from the device
     --gap <N>                   Unused addresses that end a scan within one account
-                                (default: 20). Raising this does not find missing accounts.
+                                (default: 20). Raising this does not find missing accounts
     --feerate <SAT_PER_VB>      Fee rate for `build`/`sign` (default: 1)
     --psbt-out <FILE>           Also write the unsigned PSBT here, to inspect elsewhere
+    --broadcast                 Publish after signing. Refused unless the endpoint is
+                                proven to be eCash by the fork probe
     --yes                       Skip the confirmation prompt (scripting only)
     -h, --help                  Show this help
 
-`sign` stops after verifying the device's output. Broadcasting is not implemented: eCash has not
-activated, so no endpoint can pass the fork probe and a signed transaction would have nowhere
-valid to go.
+Broadcasting is gated on the fork probe: an endpoint must be proven to be eCash and not Bitcoin,
+which is impossible until the chains diverge at the fork block. `ecx status` says where that
+stands. Signing works regardless — the transaction carries a locktime Bitcoin will never accept.
 ";
 
 fn has(args: &[String], name: &str) -> bool {
@@ -498,6 +505,77 @@ async fn run(command: &str, args: &[String]) -> Result<(), String> {
                 report_unbroadcast(&tx, &profile);
                 Ok(())
             }
+        }
+
+        "check" => {
+            let profile = profile(args);
+            let chain = EsploraChain::new(profile.clone()).map_err(|e| e.to_string())?;
+            let signer = ecx_signer::connect_any().await.map_err(|e| e.to_string())?;
+            let label = format!("{:?}", signer.kind());
+            let (_, accounts) = discover(&chain, signer.as_ref(), label, depth(args)?, render)
+                .await
+                .map_err(|e| e.to_string())?;
+
+            let reference = match flag(args, "--bitcoin") {
+                Some(url) => ecx_chain::BitcoinReference::new(&url),
+                None => ecx_chain::BitcoinReference::from_env(),
+            }
+            .map_err(|e| e.to_string())?;
+
+            let selected: Vec<_> = match flag(args, "--account") {
+                Some(path) => vec![find_account(&accounts, &path)?],
+                None => accounts.iter().filter(|a| a.is_splittable()).collect(),
+            };
+            if selected.is_empty() {
+                println!("\nno account has anything to check");
+                return Ok(());
+            }
+
+            println!();
+            println!("Asking {} about each coin.", reference.host());
+            println!("Read-only — but it does reveal these transaction ids to that operator.");
+
+            for account in selected {
+                println!();
+                println!("{}", account.label());
+                let check = ecx_split::check_against_bitcoin(&reference, account, |done, total| {
+                    use std::io::Write;
+                    print!("\r  checking {}/{}…", done + 1, total);
+                    let _ = std::io::stdout().flush();
+                })
+                .await;
+                print!("\r                              \r");
+
+                for coin in &check.coins {
+                    println!(
+                        "  {}:{:<3} {:>16}  {}",
+                        coin.utxo.outpoint.txid,
+                        coin.utxo.outpoint.vout,
+                        profile.format(coin.utxo.value),
+                        coin.verdict.label()
+                    );
+                }
+
+                println!(
+                    "  shared, needs splitting : {}",
+                    profile.format(check.shared_value())
+                );
+                println!(
+                    "  already settled         : {}",
+                    profile.format(check.settled_value())
+                );
+                if check.unverified_value() > bitcoin::Amount::ZERO {
+                    // Never folded into "settled": not knowing is its own state.
+                    println!(
+                        "  COULD NOT CHECK         : {}",
+                        profile.format(check.unverified_value())
+                    );
+                }
+                if !check.worth_splitting() {
+                    println!("  nothing here needs splitting.");
+                }
+            }
+            Ok(())
         }
 
         "broadcast" => {

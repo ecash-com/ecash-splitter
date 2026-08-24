@@ -9,7 +9,10 @@
 //! split ordering is what protects the other direction — it is not an optimization.
 
 use bitcoin::{Address, Amount, Transaction, Txid, bip32::Fingerprint};
-use ecx_chain::{ChainSource, EsploraChain, ForkProbe, ScanReadiness, TipInfo, TxState, now_unix};
+use ecx_chain::{
+    BitcoinReference, ChainSource, EsploraChain, ForkProbe, ScanReadiness, SplitVerdict, TipInfo,
+    TxState, now_unix,
+};
 use ecx_core::{EcxPsbt, TxIntent};
 use ecx_signer::{DeviceKind, SignedTx, Signer};
 use ecx_wallet::{
@@ -204,6 +207,94 @@ pub async fn discover_from_export(
     .await?;
 
     Ok((fingerprint, found))
+}
+
+/// One coin, with Bitcoin's opinion of it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckedUtxo {
+    pub utxo: ecx_wallet::Utxo,
+    pub verdict: SplitVerdict,
+}
+
+/// What a check found across an account.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SplitCheck {
+    pub coins: Vec<CheckedUtxo>,
+    /// Which Bitcoin endpoint was asked, for the record.
+    pub reference: String,
+}
+
+impl SplitCheck {
+    /// Value that would actually be separated by splitting.
+    pub fn shared_value(&self) -> Amount {
+        self.sum(|c| c.verdict.needs_split())
+    }
+
+    /// Value that is already eCash-only or already separated — splitting it achieves nothing.
+    pub fn settled_value(&self) -> Amount {
+        self.sum(|c| {
+            matches!(
+                c.verdict,
+                SplitVerdict::ChainSpecific | SplitVerdict::Separated
+            )
+        })
+    }
+
+    /// Value we could not reach a backend for.
+    ///
+    /// Reported separately and never folded into "safe": not knowing is its own state.
+    pub fn unverified_value(&self) -> Amount {
+        self.sum(|c| !c.verdict.is_decided())
+    }
+
+    fn sum(&self, pred: impl Fn(&CheckedUtxo) -> bool) -> Amount {
+        self.coins
+            .iter()
+            .filter(|c| pred(c))
+            .map(|c| c.utxo.value)
+            .sum()
+    }
+
+    pub fn count(&self, verdict: SplitVerdict) -> usize {
+        self.coins.iter().filter(|c| c.verdict == verdict).count()
+    }
+
+    /// Is there anything here worth splitting?
+    ///
+    /// True while anything is unverified, too: an unreachable backend must not read as "nothing
+    /// to do here".
+    pub fn worth_splitting(&self) -> bool {
+        self.coins
+            .iter()
+            .any(|c| c.verdict.needs_split() || !c.verdict.is_decided())
+    }
+}
+
+/// Ask Bitcoin about every coin in an account.
+///
+/// Read-only HTTP: no key is touched, nothing is signed. It does reveal the account's transaction
+/// ids to whoever runs the Bitcoin endpoint — same coins either chain, but a different operator
+/// learning about them — which is why this is something a user asks for rather than part of every
+/// scan.
+pub async fn check_against_bitcoin(
+    reference: &BitcoinReference,
+    account: &DiscoveredAccount,
+    mut on_progress: impl FnMut(usize, usize),
+) -> SplitCheck {
+    let total = account.utxos.len();
+    let mut coins = Vec::with_capacity(total);
+    for (done, utxo) in account.utxos.iter().enumerate() {
+        on_progress(done, total);
+        let verdict = reference.verdict(utxo.outpoint).await;
+        coins.push(CheckedUtxo {
+            utxo: utxo.clone(),
+            verdict,
+        });
+    }
+    SplitCheck {
+        coins,
+        reference: reference.host().to_string(),
+    }
 }
 
 /// Derive the ECX destination from the device: a fresh account, never used on Bitcoin (§7.2).
@@ -540,6 +631,60 @@ mod tests {
         assert!(verify_imported(SignedTx::Transaction(Box::new(tampered)), &intent).is_err());
     }
 
+    fn coin(seed: u8, sats: u64, verdict: SplitVerdict) -> CheckedUtxo {
+        use bitcoin::hashes::Hash;
+        CheckedUtxo {
+            utxo: ecx_wallet::Utxo {
+                outpoint: bitcoin::OutPoint {
+                    txid: bitcoin::Txid::from_byte_array([seed; 32]),
+                    vout: 0,
+                },
+                value: Amount::from_sat(sats),
+                height: Some(963_000),
+            },
+            verdict,
+        }
+    }
+
+    #[test]
+    fn a_check_separates_shared_from_settled_from_unknown() {
+        let check = SplitCheck {
+            coins: vec![
+                coin(1, 1_000, SplitVerdict::NeedsSplit),
+                coin(2, 2_000, SplitVerdict::ChainSpecific),
+                coin(3, 4_000, SplitVerdict::Separated),
+                coin(4, 8_000, SplitVerdict::Unverified),
+            ],
+            reference: "example".into(),
+        };
+        assert_eq!(check.shared_value(), Amount::from_sat(1_000));
+        // Already eCash-only and already separated both count as settled.
+        assert_eq!(check.settled_value(), Amount::from_sat(6_000));
+        // Never folded into settled.
+        assert_eq!(check.unverified_value(), Amount::from_sat(8_000));
+    }
+
+    #[test]
+    fn an_unreachable_backend_does_not_read_as_nothing_to_do() {
+        let unknown = SplitCheck {
+            coins: vec![coin(1, 1_000, SplitVerdict::Unverified)],
+            reference: "example".into(),
+        };
+        assert!(
+            unknown.worth_splitting(),
+            "unverified must not look settled"
+        );
+
+        let settled = SplitCheck {
+            coins: vec![
+                coin(1, 1_000, SplitVerdict::ChainSpecific),
+                coin(2, 2_000, SplitVerdict::Separated),
+            ],
+            reference: "example".into(),
+        };
+        assert!(!settled.worth_splitting());
+    }
+
     #[tokio::test]
     async fn building_refuses_an_unconfirmed_destination() {
         // Guard order matters: this must fail before any chain or device work happens, so an
@@ -551,6 +696,7 @@ mod tests {
             descriptor: String::new(),
             change_descriptor: String::new(),
             utxo_count: 0,
+            utxos: Vec::new(),
             balance: Amount::ZERO,
             tx_count: 0,
         };

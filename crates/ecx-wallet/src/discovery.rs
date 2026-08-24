@@ -116,11 +116,26 @@ async fn scan_one(
         return Ok(None);
     }
 
+    let utxos: Vec<crate::Utxo> = wallet
+        .list_unspent()
+        .map(|u| crate::Utxo {
+            outpoint: u.outpoint,
+            value: u.txout.value,
+            height: match u.chain_position {
+                bdk_wallet::chain::ChainPosition::Confirmed { anchor, .. } => {
+                    Some(anchor.block_id.height)
+                }
+                bdk_wallet::chain::ChainPosition::Unconfirmed { .. } => None,
+            },
+        })
+        .collect();
+
     Ok(Some(DiscoveredAccount {
         candidate: candidate.clone(),
         descriptor: external,
         change_descriptor: internal,
-        utxo_count: wallet.list_unspent().count(),
+        utxo_count: utxos.len(),
+        utxos,
         balance: wallet.balance().total(),
         tx_count,
     }))

@@ -5,9 +5,11 @@
 
 use bitcoin::{BlockHash, Transaction, Txid};
 
+pub mod bitcoin_ref;
 pub mod esplora;
 pub mod profile;
 
+pub use bitcoin_ref::{BitcoinReference, SplitVerdict};
 use ecx_core::ECASH_HEIGHT;
 pub use esplora::EsploraChain;
 pub use profile::{ChainProfile, ProfileKind};

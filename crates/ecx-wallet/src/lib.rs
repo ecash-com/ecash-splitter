@@ -130,6 +130,16 @@ pub fn descriptor_pair(
     )
 }
 
+/// One spendable coin.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Utxo {
+    pub outpoint: bitcoin::OutPoint,
+    pub value: Amount,
+    /// Height it confirmed at, if confirmed. **A weak signal on its own** — see
+    /// `ecx_chain::bitcoin_ref` for why height cannot decide whether a coin is shared.
+    pub height: Option<u32>,
+}
+
 /// An account discovery actually found history in.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiscoveredAccount {
@@ -139,6 +149,8 @@ pub struct DiscoveredAccount {
     /// Internal (change) descriptor.
     pub change_descriptor: String,
     pub utxo_count: usize,
+    /// The actual coins, not just a count — the Bitcoin cross-check needs outpoints.
+    pub utxos: Vec<Utxo>,
     pub balance: Amount,
     /// Total transactions seen. An account with history but a zero balance is still worth
     /// showing — it tells the user we looked and found nothing left to split.
