@@ -416,9 +416,9 @@ pub fn verify_imported(signed: SignedTx, intent: &TxIntent) -> Result<Transactio
 pub enum BroadcastReadiness {
     /// The endpoint was proven to be ECX. Carries the proof.
     Ready(ForkProbe),
-    /// Bitcoin has not reached the fork height, or we have no reference hash for it yet, so no
-    /// endpoint can be distinguished from Bitcoin.
-    ChainsNotDiverged { bitcoin_tip: u32 },
+    /// No Bitcoin reference hash is configured, so no endpoint can be distinguished from
+    /// Bitcoin. A gap in our configuration, not a fact about the chain.
+    NoBitcoinReference,
     /// The endpoint is Bitcoin. Refuse permanently.
     EndpointIsBitcoin,
     /// The endpoint has not synced past the fork.
@@ -434,10 +434,10 @@ impl BroadcastReadiness {
     pub fn explain(&self) -> Option<String> {
         match self {
             BroadcastReadiness::Ready(_) => None,
-            BroadcastReadiness::ChainsNotDiverged { bitcoin_tip } => Some(format!(
-                "eCash has not activated yet. Bitcoin is at block {bitcoin_tip} and the fork is \
-                 at {}, so no endpoint can be told apart from Bitcoin and there is nowhere valid \
-                 to send this.",
+            BroadcastReadiness::NoBitcoinReference => Some(format!(
+                "No Bitcoin reference hash is configured for the fork at block {}, so this \
+                 endpoint cannot be proven to be eCash rather than Bitcoin. Set \
+                 ECX_BITCOIN_FORK_HASH to Bitcoin's block hash at that height.",
                 ecx_core::ECASH_HEIGHT
             )),
             BroadcastReadiness::EndpointIsBitcoin => Some(
@@ -462,9 +462,7 @@ impl BroadcastReadiness {
 pub async fn broadcast_readiness(chain: &EsploraChain) -> Result<BroadcastReadiness, SplitError> {
     Ok(match ecx_chain::probe_fork(chain).await? {
         probe @ ForkProbe::ConfirmedEcx { .. } => BroadcastReadiness::Ready(probe),
-        ForkProbe::ChainsNotYetDiverged { bitcoin_tip } => {
-            BroadcastReadiness::ChainsNotDiverged { bitcoin_tip }
-        }
+        ForkProbe::NoBitcoinReference => BroadcastReadiness::NoBitcoinReference,
         ForkProbe::IsBitcoin => BroadcastReadiness::EndpointIsBitcoin,
         ForkProbe::NotSyncedToFork { tip } => BroadcastReadiness::EndpointBehind { tip },
     })

@@ -260,7 +260,7 @@ mod tests {
         let custom = ChainProfile::custom("https://anything.invalid");
         assert!(custom.is_ecx());
         assert!(
-            super::super::ForkProbe::ChainsNotYetDiverged { bitcoin_tip: 1 }
+            super::super::ForkProbe::NoBitcoinReference
                 .permit()
                 .is_none()
         );

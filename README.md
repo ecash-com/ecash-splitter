@@ -7,11 +7,14 @@ Not a wallet. It builds a replay-protected sweep, has a hardware device sign it,
 bytes that come back, and broadcasts to ECX. Available as a desktop app and a CLI — both share
 the same core, so they behave identically.
 
-> **Pre-release.** eCash activates at block 963,648. Everything works up to and including
-> signing; **broadcasting stays refused until the chains diverge**, because before then no
-> endpoint can be proven to be ECX rather than Bitcoin. `ecx status` says where that stands.
-> Alpha and beta coins are also destroyed and re-issued at full launch (973,728, 2026-10-31) —
-> nothing produced before then is durable value.
+> **Alphanet.** Configured for the alpha fork at block 963,648, which activated on 2026-08-23.
+> The full flow works, broadcast included — `ecx status` confirms the endpoint is provably eCash.
+> **Alpha and beta coins are destroyed and re-issued at full launch** (973,728, 2026-10-31), so
+> nothing produced now is durable value.
+>
+> Each phase forks at its own height against its own Bitcoin block. Moving to beta or to the real
+> launch means updating `ECASH_HEIGHT`, `BITCOIN_HASH_AT_FORK` and the endpoint — see
+> [Changing endpoints between fork phases](#changing-endpoints-between-fork-phases).
 
 ## Requirements
 
@@ -90,16 +93,28 @@ ECX_ESPLORA_URL=https://explorer.beta.ecash.ninja/api cargo run -p ecash-splitte
 3. **In code** — `PRESETS` in `crates/ecx-chain/src/profile.rs` is the only place a hostname is
    written.
 
-The fork probe needs Bitcoin's block hash at the fork height, which will not exist until Bitcoin
-mines it. Set it the same way, without a rebuild:
+The fork probe also needs **Bitcoin's** block hash at the fork height — that is what proves an
+endpoint is the fork and not the original chain. It is compiled in as `BITCOIN_HASH_AT_FORK`
+(`crates/ecx-chain/src/lib.rs`) and overridable the same way:
 
 ```sh
-ECX_BITCOIN_FORK_HASH=<bitcoin's hash at block 963648> cargo run -p ecash-splitter
+ECX_BITCOIN_FORK_HASH=<bitcoin's hash at the fork height> cargo run -p ecash-splitter
 ```
 
-`BITCOIN_HASH_AT_FORK` in `profile.rs`'s sibling module is where it gets compiled in for a
-release. **Until it is set, broadcasting is refused** — which is correct: with no independent
-reference, an ECX endpoint cannot be told apart from Bitcoin.
+Take it from an independent Bitcoin source, **never from an eCash endpoint** — comparing a chain
+against itself would clear anything. With no reference set, broadcasting is refused.
+
+### Moving to the next phase
+
+Three values change together, and they must agree:
+
+| Value | Where |
+|---|---|
+| `ECASH_HEIGHT` | `crates/ecx-core/src/lib.rs` |
+| `BITCOIN_HASH_AT_FORK` — Bitcoin's hash at that height | `crates/ecx-chain/src/lib.rs` |
+| The endpoint | `PRESETS` in `crates/ecx-chain/src/profile.rs` |
+
+`ecx status` is the check: it reports whether the endpoint is provably eCash.
 
 `/api` is appended if omitted and trailing slashes are trimmed, so either form works. The
 explorer link is derived from the API base by removing `/api`; override it separately with

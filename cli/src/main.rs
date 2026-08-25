@@ -338,6 +338,19 @@ async fn run(command: &str, args: &[String]) -> Result<(), String> {
                     "not yet reached"
                 }
             );
+
+            // The fork probe, read-only. Says whether this endpoint is provably eCash before a
+            // user tries to publish to it and finds out the hard way.
+            match ecx_split::broadcast_readiness(&chain).await {
+                Ok(readiness) => match readiness.explain() {
+                    None => println!("broadcast : allowed — endpoint proven to be eCash"),
+                    Some(why) => {
+                        println!("broadcast : REFUSED");
+                        println!("            {why}");
+                    }
+                },
+                Err(e) => println!("broadcast : could not check — {e}"),
+            }
             Ok(())
         }
 

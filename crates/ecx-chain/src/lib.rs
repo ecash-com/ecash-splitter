@@ -27,8 +27,12 @@ pub enum ChainError {
     EndpointIsBitcoin,
     #[error("refusing to broadcast: endpoint has not synced past the fork (tip {tip})")]
     NotSyncedToFork { tip: u32 },
-    #[error("refusing to broadcast: ECX and Bitcoin have not diverged yet (Bitcoin tip {tip})")]
-    ChainsNotYetDiverged { tip: u32 },
+    #[error(
+        "refusing to broadcast: no Bitcoin reference hash is configured, so this endpoint cannot \
+         be told apart from Bitcoin. Set ECX_BITCOIN_FORK_HASH to Bitcoin's block hash at the \
+         fork height"
+    )]
+    NoBitcoinReference,
 }
 
 /// Everything the app needs from a chain. Deliberately small so backends stay swappable
@@ -76,11 +80,12 @@ pub enum ForkProbe {
     IsBitcoin,
     /// Endpoint has not synced past the fork. Usable for scanning, never for broadcast.
     NotSyncedToFork { tip: u32 },
-    /// Bitcoin itself has not reached the fork height, so there is nothing to compare against.
+    /// No Bitcoin reference hash is configured, so there is nothing to compare against.
     ///
-    /// True until Bitcoin mines block [`ECASH_HEIGHT`] — at 2026-08-21 its tip was 963,465, some
-    /// 183 blocks short. Until then [`BITCOIN_HASH_AT_FORK`] cannot be filled in.
-    ChainsNotYetDiverged { bitcoin_tip: u32 },
+    /// Distinct from every other variant: this is a gap in *our* configuration, not a fact about
+    /// the endpoint. It is the state before Bitcoin reaches the fork height, and it stays the
+    /// state afterwards until [`BITCOIN_HASH_AT_FORK`] or [`ENV_BITCOIN_FORK_HASH`] is set.
+    NoBitcoinReference,
 }
 
 impl ForkProbe {
@@ -99,9 +104,7 @@ impl ForkProbe {
             ForkProbe::ConfirmedEcx { .. } => None,
             ForkProbe::IsBitcoin => Some(ChainError::EndpointIsBitcoin),
             ForkProbe::NotSyncedToFork { tip } => Some(ChainError::NotSyncedToFork { tip: *tip }),
-            ForkProbe::ChainsNotYetDiverged { bitcoin_tip } => {
-                Some(ChainError::ChainsNotYetDiverged { tip: *bitcoin_tip })
-            }
+            ForkProbe::NoBitcoinReference => Some(ChainError::NoBitcoinReference),
         }
     }
 }
@@ -112,10 +115,17 @@ pub const ENV_BITCOIN_FORK_HASH: &str = "ECX_BITCOIN_FORK_HASH";
 
 /// Bitcoin mainnet's block hash at [`ECASH_HEIGHT`], compiled in.
 ///
-/// **`None` until Bitcoin mines that block** — at 2026-08-21 its tip was ~963,480, still short of
-/// 963,648. Fill this in from a trusted Bitcoin source once the height is reached, and refresh it
-/// per phase.
-pub const BITCOIN_HASH_AT_FORK: Option<&str> = None;
+/// Read 2026-08-25 from blockstream.info and mempool.space independently, both agreeing, with
+/// Bitcoin's tip at 964,003 — comfortably past the fork height.
+///
+/// For comparison, ECX alphanet's block at the same height is
+/// `0000000000b360c17636b7a6c366e3effbe91a847eb5d61b7a7b29476439e924` — note the shorter run of
+/// leading zeros, which is the difficulty reset at the fork showing through.
+///
+/// **Update this per phase.** Each launch forks at its own height, and a stale value here means
+/// the probe compares against the wrong block.
+pub const BITCOIN_HASH_AT_FORK: Option<&str> =
+    Some("00000000000000000001769d9a327f5b455aa8a2dd407b1b63040d2a9f832d32");
 
 /// Bitcoin's hash at the fork height: from the environment if set, otherwise compiled in.
 ///
@@ -146,10 +156,9 @@ pub async fn probe_fork_against(
     bitcoin_reference: Option<BlockHash>,
 ) -> Result<ForkProbe, ChainError> {
     let Some(reference) = bitcoin_reference else {
-        // No reference means the chains have not diverged yet, so nothing can be proven.
-        return Ok(ForkProbe::ChainsNotYetDiverged {
-            bitcoin_tip: source.tip_height().await.unwrap_or(0),
-        });
+        // Nothing to compare against. Note this says nothing about the endpoint — asking it for
+        // its own tip here would only invite reporting one chain's height as the other's.
+        return Ok(ForkProbe::NoBitcoinReference);
     };
     match source.block_hash_at(ECASH_HEIGHT).await? {
         None => Ok(ForkProbe::NotSyncedToFork {
@@ -357,7 +366,7 @@ mod tests {
             hash_at_fork: Some(hash(0xec)),
         };
         let probe = probe_fork_against(&chain, None).await.unwrap();
-        assert!(matches!(probe, ForkProbe::ChainsNotYetDiverged { .. }));
+        assert_eq!(probe, ForkProbe::NoBitcoinReference);
         assert!(probe.permit().is_none());
     }
 
@@ -404,13 +413,7 @@ mod tests {
         assert!(ForkProbe::ConfirmedEcx { hash }.permit().is_some());
         assert!(ForkProbe::IsBitcoin.permit().is_none());
         assert!(ForkProbe::NotSyncedToFork { tip: 1 }.permit().is_none());
-        assert!(
-            ForkProbe::ChainsNotYetDiverged {
-                bitcoin_tip: 963_465
-            }
-            .permit()
-            .is_none()
-        );
+        assert!(ForkProbe::NoBitcoinReference.permit().is_none());
     }
 
     #[test]
@@ -419,19 +422,23 @@ mod tests {
         assert!(ForkProbe::ConfirmedEcx { hash }.may_broadcast());
         assert!(!ForkProbe::IsBitcoin.may_broadcast());
         assert!(!ForkProbe::NotSyncedToFork { tip: 1 }.may_broadcast());
-        assert!(
-            !ForkProbe::ChainsNotYetDiverged {
-                bitcoin_tip: 963_465
-            }
-            .may_broadcast()
-        );
+        assert!(!ForkProbe::NoBitcoinReference.may_broadcast());
     }
 
     #[test]
-    fn probe_cannot_run_before_the_chains_diverge() {
-        // Nothing is compiled in until Bitcoin mines block 963,648. The env override is what
-        // arms the probe the moment it does, without waiting for a release.
-        assert!(BITCOIN_HASH_AT_FORK.is_none());
+    fn the_compiled_in_reference_parses_and_is_bitcoins_not_ecashs() {
+        let hash = bitcoin_hash_at_fork().expect("a reference is compiled in");
+        // Guards a paste error: ECX alphanet's block at the same height, which would make the
+        // probe clear Bitcoin and reject eCash — exactly backwards.
+        assert_ne!(
+            hash.to_string(),
+            "0000000000b360c17636b7a6c366e3effbe91a847eb5d61b7a7b29476439e924",
+            "that is ECX's hash at the fork height, not Bitcoin's"
+        );
+        assert_eq!(
+            hash.to_string(),
+            "00000000000000000001769d9a327f5b455aa8a2dd407b1b63040d2a9f832d32"
+        );
     }
 
     #[test]
