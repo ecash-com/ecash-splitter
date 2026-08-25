@@ -1,6 +1,6 @@
 # Support status
 
-What works today, what does not, and what each missing piece needs. Written 2026-08-21, updated after signing was verified on hardware; check
+What works today, what does not, and what each missing piece needs. Written 2026-08-21, updated 2026-08-25 after a real split confirmed on alphanet; check
 `git log` before trusting it. Section references are to [`CLAUDE.md`](../CLAUDE.md).
 
 Key: ✅ works · 🟡 implemented, untested on hardware · ⛔ deliberately excluded · ❌ not built
@@ -12,15 +12,33 @@ Key: ✅ works · 🟡 implemented, untested on hardware · ⛔ deliberately exc
 | | |
 |---|---|
 | **Frontends** | Desktop (GPUI) ✅ · CLI (`ecx`) ✅ — both share `ecx-split`, neither owns the flow |
-| **Flow** | Connect → discover → select → destination → build → review → **sign + verify** ✅ in **both** frontends · broadcast ❌ |
+| **Flow** | Connect → discover → select → destination → build → review → sign → verify → **broadcast** ✅ — the whole chain, proven end to end on alphanet |
 | **Devices** | USB: Ledger ✅ · Coldcard 🟡 · Specter 🟡 · Jade 🟡 · Trezor 🟡 · BitBox02 ❌<br>Air-gap: **parked** — library exists, no UI |
 | **Chain** | Esplora ✅ · Electrum ❌ · compact-filter SPV ⛔ |
 | **Tests** | 52, all passing. 19 of them are the `ecx-core` invariant suite |
-| **Frontend parity** | At parity: both sign, verify, and adjust search depth. Neither broadcasts |
+| **Frontend parity** | Both sign, verify, broadcast and adjust search depth. `check` is CLI-only |
 
-The app **stops before signing on purpose**: eCash activates at block 963,648 and until then the
-chains are identical, no endpoint can pass the fork probe, and a signed transaction would have
-nowhere valid to go.
+### Proven on alphanet, 2026-08-25
+
+A real sweep from a Ledger, confirmed in block 995,593, and checked on both chains afterwards:
+
+```
+ECX     outspends[2] : spent      ← swept
+Bitcoin outspend  2  : unspent    ← untouched
+```
+
+A coin that existed identically on both ledgers is now spent on eCash and still sitting on
+Bitcoin. That is the entire purpose of the tool, demonstrated rather than asserted.
+
+Two bugs stood in the way, both worth remembering:
+
+- **`esplora-client` sends no `Content-Type` header.** Some Esplora deployments require
+  `text/plain` and, without it, never hand the body to the node — it answers
+  `sendrawtransaction RPC error: {"code":-1}` for *any* input, valid or not. Broadcast is now
+  posted directly with the header set.
+- **We discarded the node's reason**, collapsing `Error::HttpResponse` to "HTTP 400" and throwing
+  away the message Esplora puts the real explanation in. That is what made the first bug take so
+  long to find.
 
 ---
 
@@ -150,8 +168,9 @@ fallback preset.
 | 5. Destination | ✅ Pasted (default, behind a typed acknowledgement) or device-derived at `m/84'/0'/1'` |
 | 6. Build + review | ✅ Sweep PSBT, full breakdown, unsigned PSBT shown and copyable |
 | 7. Sign | ✅ Both frontends, **both verified on a Ledger** |
+| 8. Verify | ✅ Called on both device shapes before anything is published |
 | 8. Verify signed bytes | ✅ Called by `ecx_split::sign_and_verify`, on both device shapes. `resolve_signed` finalizes a PSBT or takes Trezor's transaction as-is |
-| 9. Broadcast | 🟡 `ecx_split::broadcast` implemented and requires a `BroadcastPermit`, which no probe can mint until the chains diverge. No UI |
+| 9. Broadcast | ✅ Both frontends, gated on the fork probe. **Proven on alphanet 2026-08-25** |
 | 10. Wait for depth | ❌ Not built. `MIN_CONFIRMATIONS = 30` is a placeholder pending real alpha block times |
 | 11. Hand off descriptor | ❌ Not built |
 

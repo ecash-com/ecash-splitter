@@ -8,7 +8,8 @@ bytes that come back, and broadcasts to ECX. Available as a desktop app and a CL
 the same core, so they behave identically.
 
 > **Alphanet.** Configured for the alpha fork at block 963,648, which activated on 2026-08-23.
-> The full flow works, broadcast included — `ecx status` confirms the endpoint is provably eCash.
+> The full flow works, broadcast included, and has been run end to end against a Ledger with the
+> result confirmed on-chain. `ecx status` confirms the endpoint is provably eCash.
 > **Alpha and beta coins are destroyed and re-issued at full launch** (973,728, 2026-10-31), so
 > nothing produced now is durable value.
 >
