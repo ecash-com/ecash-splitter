@@ -42,19 +42,29 @@ sha256sum -c SHA256SUMS
 
 ### macOS
 
-The `.app` is ad-hoc signed, which is enough for Apple Silicon to run it at all but not enough
-for Gatekeeper. On first launch:
+The `.app` is ad-hoc signed — enough for Apple Silicon to run it at all, not enough for
+Gatekeeper. What you do next depends on your macOS version, and the old advice no longer works:
 
-**Right-click the app → Open**, then **Open** in the dialog. Double-clicking will not offer that
-choice — it just refuses.
+**macOS 15 Sequoia and later** — Apple removed the Control-click → Open bypass. The sequence is:
 
-If it was quarantined on download and still will not start:
+1. Double-click the app. It is blocked; dismiss the dialog.
+2. **System Settings → Privacy & Security**, scroll down to **Security**.
+3. A line names the app that was blocked — click **Open Anyway**.
+4. Authenticate, then confirm **Open Anyway** once more.
+
+You only do this once per app. It has to be attempted and blocked *first*, otherwise there is
+nothing for Settings to offer.
+
+**macOS 14 Sonoma and earlier** — **Control-click the app → Open**, then **Open** in the dialog.
+Plain double-clicking will not offer the choice.
+
+If it still will not start, clear the download quarantine:
 
 ```sh
 xattr -dr com.apple.quarantine "/Applications/eCash Splitter.app"
 ```
 
-For the CLI, put `ecx` somewhere on your PATH and clear the same attribute:
+For the CLI, put `ecx` on your PATH and clear the same attribute:
 
 ```sh
 xattr -d com.apple.quarantine ./ecx && chmod +x ./ecx && sudo mv ./ecx /usr/local/bin/
