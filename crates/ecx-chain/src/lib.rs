@@ -262,6 +262,105 @@ pub fn now_unix() -> u64 {
 mod tests {
     use super::*;
 
+    /// A chain that answers however the test needs, so the gate can be exercised without a
+    /// network. `hash_at_fork = None` models an endpoint that has not reached the fork height.
+    struct FakeChain {
+        tip: u32,
+        hash_at_fork: Option<BlockHash>,
+    }
+
+    fn hash(byte: u8) -> BlockHash {
+        use bitcoin::hashes::Hash;
+        BlockHash::from_byte_array([byte; 32])
+    }
+
+    #[async_trait::async_trait]
+    impl ChainSource for FakeChain {
+        async fn tip_height(&self) -> Result<u32, ChainError> {
+            Ok(self.tip)
+        }
+        async fn tip(&self) -> Result<TipInfo, ChainError> {
+            Ok(TipInfo {
+                height: self.tip,
+                time: 0,
+            })
+        }
+        async fn block_hash_at(&self, _height: u32) -> Result<Option<BlockHash>, ChainError> {
+            Ok(self.hash_at_fork)
+        }
+        async fn raw_tx(&self, _txid: Txid) -> Result<Option<Transaction>, ChainError> {
+            Ok(None)
+        }
+        async fn tx_state(&self, _txid: Txid) -> Result<TxState, ChainError> {
+            Ok(TxState::Unknown)
+        }
+        async fn broadcast(
+            &self,
+            tx: &Transaction,
+            _permit: &BroadcastPermit,
+        ) -> Result<Txid, ChainError> {
+            Ok(tx.compute_txid())
+        }
+    }
+
+    /// **The one that matters.** An endpoint whose block at the fork height matches Bitcoin's *is*
+    /// Bitcoin, and must never yield a permit — this is what stops a signed sweep being published
+    /// to Bitcoin mainnet, where it would be a real spend of real BTC.
+    #[tokio::test]
+    async fn an_endpoint_that_is_bitcoin_never_mints_a_permit() {
+        let bitcoin = hash(0xbb);
+        let chain = FakeChain {
+            tip: 970_000,
+            hash_at_fork: Some(bitcoin),
+        };
+
+        let probe = probe_fork_against(&chain, Some(bitcoin)).await.unwrap();
+        assert_eq!(probe, ForkProbe::IsBitcoin);
+        assert!(
+            probe.permit().is_none(),
+            "Bitcoin must never be broadcastable to"
+        );
+        assert!(!probe.may_broadcast());
+    }
+
+    #[tokio::test]
+    async fn only_a_chain_that_diverged_from_bitcoin_mints_a_permit() {
+        let bitcoin = hash(0xbb);
+        let ecash = hash(0xec);
+        let chain = FakeChain {
+            tip: 970_000,
+            hash_at_fork: Some(ecash),
+        };
+
+        let probe = probe_fork_against(&chain, Some(bitcoin)).await.unwrap();
+        assert_eq!(probe, ForkProbe::ConfirmedEcx { hash: ecash });
+        assert!(probe.permit().is_some());
+    }
+
+    #[tokio::test]
+    async fn an_endpoint_short_of_the_fork_mints_no_permit() {
+        let chain = FakeChain {
+            tip: 963_500,
+            hash_at_fork: None,
+        };
+        let probe = probe_fork_against(&chain, Some(hash(0xbb))).await.unwrap();
+        assert_eq!(probe, ForkProbe::NotSyncedToFork { tip: 963_500 });
+        assert!(probe.permit().is_none());
+    }
+
+    /// With no independent reference there is nothing to compare against, so nothing can be
+    /// proven and nothing may be published. This is the state before the fork.
+    #[tokio::test]
+    async fn no_reference_hash_means_no_permit() {
+        let chain = FakeChain {
+            tip: 963_500,
+            hash_at_fork: Some(hash(0xec)),
+        };
+        let probe = probe_fork_against(&chain, None).await.unwrap();
+        assert!(matches!(probe, ForkProbe::ChainsNotYetDiverged { .. }));
+        assert!(probe.permit().is_none());
+    }
+
     const NOW: u64 = 1_787_000_000;
 
     #[test]

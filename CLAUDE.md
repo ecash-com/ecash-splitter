@@ -369,8 +369,8 @@ All on `bitcoin 0.32`:
 - **Coin type is `0'`.** ECX has no SLIP-44 of its own, so we derive at `m/84'/0'/…` — the user's
   *real Bitcoin account*. That is where the coins are; there is no alternative. It also means a
   bug here spends real BTC. Never let a device be in testnet mode.
-- **Passphrase wallets change the master fingerprint.** The descriptor must be rebuilt per
-  passphrase; a fingerprint mismatch between descriptor and device is a hard error, never a warning.
+- **A fingerprint mismatch between descriptor and device is a hard error, never a warning.** It
+  means the descriptor came from a different device — or the same device in a different state.
 - **CONFIRM on real hardware, per device, before any release:** that the device accepts
   `nLockTime = 499999999`; what (if anything) it displays about it — Trezor is expected to show a
   locktime/blockheight warning, which is the only on-device ECX marker we get; and whether Coldcard
@@ -473,11 +473,7 @@ Three failure modes to handle explicitly rather than paper over:
    less than halfway to the fork. Scanning it today returns "no history" for funded accounts.
    Gate every result on `tip >= EcashHeight`; below it show `syncing — 458,330 / 963,648` and
    state no balance at all.
-2. **A passphrase wallet is invisible.** A BIP39 passphrase yields a different fingerprint and a
-   completely different account set. We cannot enumerate them and cannot detect that they exist.
-   Reporting "found 0.4 BTC" against the wrong wallet is a serious miss, so ask explicitly and
-   support re-running discovery per passphrase, keyed by fingerprint.
-3. **Non-standard paths get warnings or refusals** from the device. Auto-discovery stays on the
+2. **Non-standard paths get warnings or refusals** from the device. Auto-discovery stays on the
    four standard purposes; manual entry is advanced-only and may prompt on-device.
 
 **Discovery must also work with no device connected** — paste an xpub or descriptor, scan, and

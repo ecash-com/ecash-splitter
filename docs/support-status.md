@@ -175,9 +175,6 @@ fallback preset.
   `--feerate`.
 - **A USB HID device can only be open once** — see the note above; signing needs a second
   connection and the first must be dropped.
-- **Passphrase wallets** are not surfaced. A passphrase yields a different fingerprint and a
-  completely different account set; the app neither asks about one nor supports rescanning per
-  passphrase (§5.6).
 
 ---
 

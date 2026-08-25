@@ -352,7 +352,16 @@ async fn run(command: &str, args: &[String]) -> Result<(), String> {
 
             println!();
             if accounts.is_empty() {
-                println!("no accounts with history");
+                // "Nothing in what we searched" is not "nothing in your wallet", and the
+                // difference matters on a screen about money.
+                println!("no accounts with history in what was searched");
+                println!(
+                    "  searched {} candidates (4 address types x {} account indices, gap {})",
+                    depth(args)?.candidate_count(),
+                    depth(args)?.accounts,
+                    depth(args)?.stop_gap
+                );
+                println!("  try --accounts <N> or --gap <N> to look further out");
                 return Ok(());
             }
             print_accounts(&accounts, &profile, false);

@@ -666,7 +666,7 @@ fn accounts_view(
                     div()
                         .text_sm()
                         .text_color(cx.theme().muted_foreground)
-                        .child("All twelve standard accounts were scanned against a caught-up chain and none has any transactions. If you use a passphrase, that is a different wallet — reconnect with it and search again."),
+                        .child("Every candidate account was scanned against a caught-up chain and none has any transactions. Widen the search with the depth controls if an account was created further out."),
                 )
                 .into_any_element(),
         );

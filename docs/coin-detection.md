@@ -82,11 +82,10 @@ Classification only rules on coins we found. These are the ways a coin stays inv
 | **Accounts beyond the probe range** — default 3 indices per address type | `--accounts <N>` / GUI presets. Default 3 covers most users, not all |
 | **Addresses beyond the gap limit** within a scanned account | `--gap <N>` / GUI presets |
 | **Non-standard derivation paths** — anything not BIP44/49/84/86 | ❌ Not searched. A wallet using an unusual path is invisible |
-| **Passphrase wallets** | ❌ A passphrase yields a different fingerprint and a completely different account set. We neither ask about one nor support rescanning per passphrase |
-| **A different seed** | Out of scope by definition — connect that device instead |
+| **A different seed** | Connect that device instead |
 
-The first two are tunable, the last three are not. **An empty result means "nothing in what we
-searched", never "nothing in your wallet"**, and any UI reporting it has to say so.
+The first two are tunable. **An empty result means "nothing in what we searched", never "nothing
+in your wallet"**, and both frontends say so when they find nothing, naming what was searched.
 
 ---
 

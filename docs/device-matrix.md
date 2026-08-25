@@ -23,7 +23,7 @@ build a sweep through `finalize_ecx_psbt` and record:
 | 7 | Signs a **default wallet policy** (`wpkh(@0/**)`) without registration | Ledger-specific; anything non-default needs `register_wallet` + HMAC persistence |
 | 8 | Change output to a **second account** (`m/84'/0'/1'`) shown as change or as external? | The ECX destination is a fresh account (§7.2); an external-looking change output is a UX problem, not a safety one |
 | 9 | `verify_signed` passes on the returned bytes | Golden Rule 3 — re-verified, not trusted |
-| 10 | Passphrase wallet: fingerprint changes, descriptor rebuilt | §5.4 |
+| 10 | Reported fingerprint matches the descriptor's | A mismatch is a hard error, never a warning (§5.4) |
 | 11 | **PIN is entered on-device** (not via a host prompt) | Golden Rule 1. A device that demands host entry is unsupported — this is why Trezor Model One is out (§5.5) |
 | 12 | **Does unlock require network access?** | Jade relays to Blockstream's blind oracle — required by its security model, and a documented Golden Rule 8 carve-out. Verify it works behind a proxy / on a restricted network |
 | 13 | **Passphrase is entered on-device** | Same rule. Verify `ApplySettings` on-device-only can be honoured; host-cleartext `PassphraseAck` is a fail |
