@@ -71,12 +71,27 @@ Useful options: `--endpoint <URL>`, `--accounts <N>` (how many account indices t
 address type), `--gap <N>`, `--feerate <SAT_PER_VB>`, `--psbt-out <FILE>`, `--broadcast`.
 
 ```sh
+# is the endpoint reachable, caught up, and provably eCash?
+cargo run -p ecash-splitter-cli -- status
+
 # find your accounts
 cargo run -p ecash-splitter-cli -- discover
 
-# sweep one of them; prompts for the account if --account is omitted
+# ask Bitcoin which coins are genuinely shared and worth splitting
+cargo run -p ecash-splitter-cli -- check
+
+# sign only — prints the PSBT and the signed hex, publishes nothing
 cargo run -p ecash-splitter-cli -- sign --to bc1q...
+
+# sign and publish; prompts for the account if --account is omitted
+cargo run -p ecash-splitter-cli -- sign --to bc1q... --broadcast
+
+# then watch it confirm
+cargo run -p ecash-splitter-cli -- track --txid <TXID>
 ```
+
+Without `--broadcast`, `sign` stops after verifying and prints the signed hex — publish it later
+with `broadcast --tx <HEX>`. With it, the fork probe has to clear first or nothing is sent.
 
 ## Changing endpoints between fork phases
 
