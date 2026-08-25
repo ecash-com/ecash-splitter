@@ -20,7 +20,8 @@ Key: ✅ works · 🟡 implemented, untested on hardware · ⛔ deliberately exc
 
 ### Proven on alphanet, 2026-08-25
 
-A real sweep from a Ledger, confirmed in block 995,593, and checked on both chains afterwards:
+Real sweeps from a Ledger through **both** frontends, the first confirmed in block 995,593 and
+checked on both chains afterwards:
 
 ```
 ECX     outspends[2] : spent      ← swept
@@ -170,7 +171,7 @@ fallback preset.
 | 7. Sign | ✅ Both frontends, **both verified on a Ledger** |
 | 8. Verify | ✅ Called on both device shapes before anything is published |
 | 8. Verify signed bytes | ✅ Called by `ecx_split::sign_and_verify`, on both device shapes. `resolve_signed` finalizes a PSBT or takes Trezor's transaction as-is |
-| 9. Broadcast | ✅ Both frontends, gated on the fork probe. **Proven on alphanet 2026-08-25** |
+| 9. Broadcast | ✅ Both frontends, gated on the fork probe. **Both proven on alphanet 2026-08-25** |
 | 10. Wait for depth | ❌ Not built. `MIN_CONFIRMATIONS = 30` is a placeholder pending real alpha block times |
 | 11. Hand off descriptor | ❌ Not built |
 
