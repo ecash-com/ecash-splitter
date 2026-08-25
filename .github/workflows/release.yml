@@ -24,7 +24,7 @@ jobs:
     name: Verify
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
 
       # Not GPUI — this is the hardware-wallet side. hidapi and ledger-transport-hidapi need
@@ -69,13 +69,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: macos-14,      target: aarch64-apple-darwin,      ext: "" }
-          - { os: macos-13,      target: x86_64-apple-darwin,       ext: "" }
+          - { os: macos-latest,  target: aarch64-apple-darwin,      ext: "" }
+          - { os: macos-latest,  target: x86_64-apple-darwin,       ext: "" }
           - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu,  ext: "" }
           - { os: windows-latest, target: x86_64-pc-windows-msvc,   ext: ".exe" }
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -99,7 +99,7 @@ jobs:
             tar czf "dist/$name.tar.gz" -C "target/${{ matrix.target }}/release" ecx -C "$PWD" README.md
           fi
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: cli-${{ matrix.target }}
           path: dist/*
@@ -114,13 +114,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: macos-14,       target: aarch64-apple-darwin }
-          - { os: macos-13,       target: x86_64-apple-darwin }
+          - { os: macos-latest,   target: aarch64-apple-darwin }
+          - { os: macos-latest,   target: x86_64-apple-darwin }
           - { os: ubuntu-latest,  target: x86_64-unknown-linux-gnu }
           - { os: windows-latest, target: x86_64-pc-windows-msvc }
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -130,8 +130,20 @@ jobs:
       - name: Metal Toolchain (macOS)
         if: runner.os == 'macOS'
         run: |
-          xcodebuild -downloadComponent MetalToolchain
-          xcodebuild -showComponent MetalToolchain
+          # Compile a trivial shader rather than trusting `xcrun -f metal`, which reports a path
+          # even when the toolchain is absent. Older Xcode bundles the compiler and has no
+          # -downloadComponent flag at all — it prints usage and exits 64 — so this must not be
+          # an unconditional download.
+          echo 'kernel void probe() {}' > /tmp/probe.metal
+          if xcrun metal -c /tmp/probe.metal -o /tmp/probe.air 2>/dev/null; then
+            echo "Metal shader compiler already works"
+          else
+            echo "Metal compiler unavailable; attempting download"
+            xcodebuild -downloadComponent MetalToolchain \
+              || echo "::warning::-downloadComponent unsupported on this Xcode; relying on bundled Metal"
+            xcrun metal -c /tmp/probe.metal -o /tmp/probe.air \
+              || echo "::warning::Metal shader compilation still failing; the GPUI build may fail"
+          fi
 
       # Package list taken from gpui-component's own script/install-linux.sh, so it tracks what
       # GPUI actually needs rather than what we guessed.
@@ -181,7 +193,7 @@ jobs:
           7z a "dist/ecash-splitter-${GITHUB_REF_NAME:-dev}-${{ matrix.target }}.zip" \
             "./target/${{ matrix.target }}/release/ecash-splitter.exe" ./README.md
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: gui-${{ matrix.target }}
           path: dist/*
@@ -195,8 +207,8 @@ jobs:
     needs: [cli, gui]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with: { path: artifacts }
 
       - name: Collect and checksum
