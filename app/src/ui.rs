@@ -900,7 +900,8 @@ pub fn footer(app: &SplitterApp, cx: &App) -> AnyElement {
                 .items_center()
                 .gap_2()
                 .child(SharedString::from(format!(
-                    "Fork height {}",
+                    "v{} · fork height {}",
+                    env!("CARGO_PKG_VERSION"),
                     thousands(ECASH_HEIGHT)
                 )))
                 .child("·")

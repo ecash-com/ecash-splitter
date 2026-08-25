@@ -11,6 +11,9 @@ members = [
 ]
 
 [workspace.package]
+# The single place to bump. Every crate inherits it, `ecx --version` reports it, the GUI footer
+# shows it, and contrib/bundle-macos.sh stamps it into Info.plist.
+version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"

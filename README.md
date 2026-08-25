@@ -179,6 +179,19 @@ Dependencies point one way: `app`/`cli` → `ecx-split` → `{ecx-wallet, ecx-si
 Read [`CLAUDE.md`](CLAUDE.md) before changing anything — the golden rules, the verified ECX
 consensus facts, and the decisions already settled.
 
+## Versioning
+
+One version, in `[workspace.package]` at the repo root. Every crate inherits it with
+`version.workspace = true`, and it reaches the user in three places:
+
+```sh
+ecx --version                    # ecx 0.1.0
+```
+
+the GUI footer (`v0.1.0 · fork height 963,648`), and `CFBundleShortVersionString` in the macOS
+`.app`, which `contrib/bundle-macos.sh` reads from the same root. Bump it once; tag the release
+to match.
+
 ## Icons
 
 `app_icon.png` is the 1024×1024 source. [`assets/`](assets/) holds the generated `.icns`, `.ico`,

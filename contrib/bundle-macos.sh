@@ -23,7 +23,8 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$ROOT/target/$PROFILE/ecash-splitter" "$APP/Contents/MacOS/ecash-splitter"
 cp "$ROOT/assets/icon.icns" "$APP/Contents/Resources/icon.icns"
 
-VERSION="$(grep -m1 '^version' "$ROOT/app/Cargo.toml" | cut -d'"' -f2)"
+# Version lives once, in [workspace.package] at the repo root.
+VERSION="$(grep -m1 '^version' "$ROOT/Cargo.toml" | cut -d'"' -f2)"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

@@ -46,6 +46,7 @@ OPTIONS:
     --broadcast                 Publish after signing. Refused unless the endpoint is
                                 proven to be eCash by the fork probe
     --yes                       Skip the confirmation prompt (scripting only)
+    -V, --version               Show the version
     -h, --help                  Show this help
 
 Broadcasting is gated on the fork probe: an endpoint must be proven to be eCash and not Bitcoin,
@@ -111,6 +112,11 @@ async fn main() -> ExitCode {
 
     if matches!(command, "-h" | "--help" | "help") {
         print!("{USAGE}");
+        return ExitCode::SUCCESS;
+    }
+
+    if matches!(command, "-V" | "--version" | "version") {
+        println!("ecx {}", env!("CARGO_PKG_VERSION"));
         return ExitCode::SUCCESS;
     }
 
