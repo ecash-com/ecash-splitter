@@ -17,7 +17,70 @@ the same core, so they behave identically.
 > launch means updating `ECASH_HEIGHT`, `BITCOIN_HASH_AT_FORK` and the endpoint — see
 > [Changing endpoints between fork phases](#changing-endpoints-between-fork-phases).
 
-## Requirements
+## Install a release
+
+Download from [Releases](https://github.com/ecash-com/ecash-splitter/releases). Two separate
+downloads per platform — the GUI and the `ecx` CLI. They are not one binary: `ecx` has no GPUI
+dependency, so it runs on headless machines where the GUI could not even start.
+
+Check what you downloaded first:
+
+```sh
+sha256sum -c SHA256SUMS
+```
+
+> ### The binaries are unsigned
+>
+> There is no Apple Developer ID signature and no Windows Authenticode certificate, so both
+> systems will warn you. That warning means *"nobody paid a certificate authority to vouch for
+> this"* — it is not a claim that anything is wrong with the file. Verify the checksum, and if
+> you want stronger assurance than our word, build from source: the whole point of a committed
+> `Cargo.lock` and a pinned toolchain is that you can reproduce these binaries yourself.
+>
+> Be suspicious of tools like this in general. Fork-claim software is a classic way to steal
+> coins, and you should not run one because a README sounded confident.
+
+### macOS
+
+The `.app` is ad-hoc signed, which is enough for Apple Silicon to run it at all but not enough
+for Gatekeeper. On first launch:
+
+**Right-click the app → Open**, then **Open** in the dialog. Double-clicking will not offer that
+choice — it just refuses.
+
+If it was quarantined on download and still will not start:
+
+```sh
+xattr -dr com.apple.quarantine "/Applications/eCash Splitter.app"
+```
+
+For the CLI, put `ecx` somewhere on your PATH and clear the same attribute:
+
+```sh
+xattr -d com.apple.quarantine ./ecx && chmod +x ./ecx && sudo mv ./ecx /usr/local/bin/
+```
+
+### Windows
+
+SmartScreen shows **"Windows protected your PC"**. Click **More info** → **Run anyway**.
+
+If the download is blocked outright, unblock it first: right-click the `.zip` → **Properties** →
+tick **Unblock** → **OK**, then extract. Unblocking the archive before extracting saves doing it
+per file.
+
+### Linux
+
+No signature machinery to fight. Make it executable and run it:
+
+```sh
+tar xzf ecash-splitter-*.tar.gz && chmod +x ecash-splitter && ./ecash-splitter
+```
+
+Icons for a `.desktop` entry are in `assets/linux/`.
+
+## Build from source
+
+### Requirements
 
 - Rust 1.94 (pinned in `rust-toolchain.toml`)
 - **macOS only:** the Metal Toolchain, which GPUI needs to compile shaders
@@ -26,14 +89,14 @@ the same core, so they behave identically.
 xcodebuild -downloadComponent MetalToolchain   # ~688 MB, one time
 ```
 
-## Build
+### Build
 
 ```sh
 cargo build
 cargo test --workspace
 ```
 
-## Run the desktop app
+### Run the desktop app
 
 ```sh
 cargo run -p ecash-splitter
@@ -51,7 +114,7 @@ open "target/debug/eCash Splitter.app"
 `cargo run` launches a bare binary, which has nowhere to carry an icon or a name; macOS reads
 both from a bundle's `Info.plist`. This is also the bundle the signing work operates on.
 
-## Run the CLI
+### Run the CLI
 
 ```sh
 cargo run -p ecash-splitter-cli -- <command>

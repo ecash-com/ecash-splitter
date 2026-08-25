@@ -26,24 +26,9 @@ cp "$ROOT/assets/icon.icns" "$APP/Contents/Resources/icon.icns"
 # Version lives once, in [workspace.package] at the repo root.
 VERSION="$(grep -m1 '^version' "$ROOT/Cargo.toml" | cut -d'"' -f2)"
 
-cat > "$APP/Contents/Info.plist" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleName</key>                  <string>eCash Splitter</string>
-    <key>CFBundleDisplayName</key>           <string>eCash Splitter</string>
-    <key>CFBundleIdentifier</key>            <string>com.ecash.splitter</string>
-    <key>CFBundleExecutable</key>            <string>ecash-splitter</string>
-    <key>CFBundleIconFile</key>              <string>icon</string>
-    <key>CFBundlePackageType</key>           <string>APPL</string>
-    <key>CFBundleShortVersionString</key>    <string>$VERSION</string>
-    <key>CFBundleVersion</key>               <string>$VERSION</string>
-    <key>LSMinimumSystemVersion</key>        <string>11.0</string>
-    <key>NSHighResolutionCapable</key>       <true/>
-</dict>
-</plist>
-PLIST
+# Shares contrib/Info.plist.in with the release workflow, so a local bundle and a released one
+# cannot describe themselves differently.
+sed -e "s/__VERSION__/$VERSION/g" "$ROOT/contrib/Info.plist.in" > "$APP/Contents/Info.plist"
 
 # macOS caches icons aggressively; touching the bundle nudges it to re-read.
 touch "$APP"

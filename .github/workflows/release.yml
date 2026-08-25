@@ -1,0 +1,217 @@
+name: Release
+
+# Tag-driven. The tag is the source of truth for the version, and the workflow refuses to build
+# if it disagrees with [workspace.package] — a release whose binaries report a different version
+# than the tag is worse than no release.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (dry run; nothing is published)"
+        required: false
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ---------------------------------------------------------------------------
+  check:
+    name: Verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Tag matches the workspace version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          crate="$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)"
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$crate" != "$tag" ]; then
+            echo "::error::tag $GITHUB_REF_NAME says $tag, Cargo.toml says $crate"
+            exit 1
+          fi
+          echo "version $crate"
+
+      # The CLI has no GPUI in its tree, so it needs none of the desktop toolchain. Verified
+      # here rather than assumed: if that ever changes, headless Linux users lose the CLI.
+      - name: CLI is free of GPUI
+        run: |
+          if cargo tree -p ecash-splitter-cli | grep -q gpui; then
+            echo "::error::the CLI has picked up a GPUI dependency"
+            exit 1
+          fi
+
+      - run: cargo fmt --all --check
+      - run: cargo clippy -p ecx-core -p ecx-chain -p ecx-wallet -p ecx-split -p ecash-splitter-cli --all-targets -- -D warnings
+      - run: cargo test -p ecx-core -p ecx-chain -p ecx-wallet -p ecx-split
+
+  # ---------------------------------------------------------------------------
+  # The CLI builds anywhere. Kept separate from the GUI on purpose: merging them would drag
+  # GPUI's display libraries into a binary meant to run on headless servers, where it would fail
+  # at load time before main().
+  cli:
+    name: CLI (${{ matrix.target }})
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-14,      target: aarch64-apple-darwin,      ext: "" }
+          - { os: macos-13,      target: x86_64-apple-darwin,       ext: "" }
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu,  ext: "" }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc,   ext: ".exe" }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - run: cargo build --release -p ecash-splitter-cli --target ${{ matrix.target }}
+
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p dist
+          name="ecx-${GITHUB_REF_NAME:-dev}-${{ matrix.target }}"
+          bin="target/${{ matrix.target }}/release/ecx${{ matrix.ext }}"
+          if [ "${{ matrix.ext }}" = ".exe" ]; then
+            7z a "dist/$name.zip" "./$bin" ./README.md ./LICENSE* 2>/dev/null || 7z a "dist/$name.zip" "./$bin" ./README.md
+          else
+            tar czf "dist/$name.tar.gz" -C "target/${{ matrix.target }}/release" ecx -C "$PWD" README.md
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-${{ matrix.target }}
+          path: dist/*
+
+  # ---------------------------------------------------------------------------
+  # The GUI needs GPUI's toolchain. Never built on Linux or Windows before this workflow, so
+  # fail-fast is off: a broken Windows build must not stop macOS from releasing.
+  gui:
+    name: GUI (${{ matrix.target }})
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-14,       target: aarch64-apple-darwin }
+          - { os: macos-13,       target: x86_64-apple-darwin }
+          - { os: ubuntu-latest,  target: x86_64-unknown-linux-gnu }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # GPUI compiles Metal shaders in a build script and fails without this, before a single
+      # Rust crate compiles. Not bundled with the Xcode Command Line Tools.
+      - name: Metal Toolchain (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          xcodebuild -downloadComponent MetalToolchain
+          xcodebuild -showComponent MetalToolchain
+
+      # Package list taken from gpui-component's own script/install-linux.sh, so it tracks what
+      # GPUI actually needs rather than what we guessed.
+      - name: System dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc g++ clang libfontconfig-dev libwayland-dev \
+            libwebkit2gtk-4.1-dev libxkbcommon-x11-dev libx11-xcb-dev \
+            libssl-dev libzstd-dev \
+            vulkan-validationlayers libvulkan1
+
+      - run: cargo build --release -p ecash-splitter --target ${{ matrix.target }}
+
+      - name: Package (macOS .app)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          mkdir -p dist
+          app="dist/eCash Splitter.app"
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+          cp "target/${{ matrix.target }}/release/ecash-splitter" "$app/Contents/MacOS/"
+          cp assets/icon.icns "$app/Contents/Resources/"
+          version="$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)"
+          sed -e "s/__VERSION__/$version/g" contrib/Info.plist.in > "$app/Contents/Info.plist"
+          # Ad-hoc signature. Not notarized, so first launch still needs right-click → Open;
+          # without any signature at all, Apple Silicon refuses to run it outright.
+          codesign --force --deep --sign - "$app"
+          ( cd dist && zip -qr "ecash-splitter-${GITHUB_REF_NAME:-dev}-${{ matrix.target }}.zip" "eCash Splitter.app" && rm -rf "eCash Splitter.app" )
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          mkdir -p dist
+          tar czf "dist/ecash-splitter-${GITHUB_REF_NAME:-dev}-${{ matrix.target }}.tar.gz" \
+            -C "target/${{ matrix.target }}/release" ecash-splitter \
+            -C "$PWD" README.md assets/linux
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          mkdir -p dist
+          7z a "dist/ecash-splitter-${GITHUB_REF_NAME:-dev}-${{ matrix.target }}.zip" \
+            "./target/${{ matrix.target }}/release/ecash-splitter.exe" ./README.md
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gui-${{ matrix.target }}
+          path: dist/*
+
+  # ---------------------------------------------------------------------------
+  publish:
+    name: Publish
+    # `always()` so a GUI target that has never been built cannot hold back the CLI, which is
+    # known to work everywhere. The release notes say which artifacts are missing.
+    if: always() && startsWith(github.ref, 'refs/tags/') && needs.cli.result == 'success'
+    needs: [cli, gui]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: artifacts }
+
+      - name: Collect and checksum
+        run: |
+          mkdir -p dist
+          find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' \) -exec cp {} dist/ \;
+          ( cd dist && sha256sum * > SHA256SUMS )
+          ls -la dist
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes="$(mktemp)"
+          {
+            echo "## Verify your download"
+            echo
+            echo '```sh'
+            echo "sha256sum -c SHA256SUMS"
+            echo '```'
+            echo
+            echo "## Notes"
+            echo
+            echo "- Binaries are **not notarized**. macOS: right-click → Open the first time."
+            echo "- The GUI and CLI ship separately. \`ecx\` has no GPUI dependency and runs headless."
+            if [ "${{ needs.gui.result }}" != "success" ]; then
+              echo "- ⚠️ Some GUI targets failed to build; only the artifacts listed below are available."
+            fi
+          } > "$notes"
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "$GITHUB_REF_NAME" --notes-file "$notes" --verify-tag
