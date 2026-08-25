@@ -45,18 +45,19 @@ sha256sum -c SHA256SUMS
 The `.app` is ad-hoc signed — enough for Apple Silicon to run it at all, not enough for
 Gatekeeper. What you do next depends on your macOS version, and the old advice no longer works:
 
-**macOS 15 Sequoia and later** — Apple removed the Control-click → Open bypass. The sequence is:
+**macOS 15 Sequoia and later** — Control-click → Open used to be the whole answer. It is now
+only the first half: it still refuses, and the actual permission is granted in Settings.
 
-1. Double-click the app. It is blocked; dismiss the dialog.
+1. **Control-click (right-click) the app → Open.** It refuses; dismiss the dialog.
 2. **System Settings → Privacy & Security**, scroll down to **Security**.
-3. A line names the app that was blocked — click **Open Anyway**.
-4. Authenticate, then confirm **Open Anyway** once more.
+3. A line names the app you just tried to open — click **Open Anyway**.
+4. Authenticate, then confirm **Open Anyway**.
 
-You only do this once per app. It has to be attempted and blocked *first*, otherwise there is
-nothing for Settings to offer.
+Step 1 is not optional. Settings only offers the button for an app that has already been blocked,
+so going there first shows nothing. You do this once per app.
 
-**macOS 14 Sonoma and earlier** — **Control-click the app → Open**, then **Open** in the dialog.
-Plain double-clicking will not offer the choice.
+**macOS 14 Sonoma and earlier** — **Control-click → Open**, then **Open** in the dialog. That is
+the whole thing; no trip to Settings.
 
 If it still will not start, clear the download quarantine:
 
