@@ -27,6 +27,8 @@ serde_json = "1"
 bdk_esplora = { version = "0.22.2", default-features = false, features = ["async-https-rustls", "tokio"] }
 esplora-client = { version = "0.12.3", default-features = false, features = ["async-https-rustls", "tokio"] }
 futures = "0.3"
+# Broadcast is posted directly rather than through esplora-client — see ecx-chain::esplora.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 # `jade` pulls reqwest, and that is correct rather than a smell: Jade has no secure element, so
 # a *blind* oracle provides its anti-brute-force guarantee, and unlocking relays an encrypted
 # handshake between device and oracle. The host is a dumb pipe — it never learns the PIN or any

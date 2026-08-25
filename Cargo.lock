@@ -1769,6 +1769,7 @@ dependencies = [
  "bitcoin",
  "ecx-core",
  "esplora-client",
+ "reqwest 0.12.28",
  "thiserror 2.0.20",
  "tokio",
  "tracing",

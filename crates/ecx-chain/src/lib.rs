@@ -20,6 +20,9 @@ pub enum ChainError {
     Unreachable(String),
     #[error("chain source returned a malformed response: {0}")]
     Malformed(String),
+    /// The node looked at the transaction and said no. Carries its reason verbatim.
+    #[error("{0}")]
+    Rejected(String),
     #[error(
         "refusing to broadcast: this endpoint is Bitcoin, not ECX \
          (its block hash at {ECASH_HEIGHT} matches Bitcoin's)"

@@ -50,8 +50,15 @@ fn describe(host: &str, e: esplora_client::Error) -> ChainError {
         E::HttpResponse { status: 404, .. } | E::HeaderHeightNotFound(_) => {
             ChainError::Malformed("not found".into())
         }
-        E::HttpResponse { status, .. } => {
-            ChainError::Unreachable(format!("{host} returned HTTP {status}"))
+        // Keep the server's message. Esplora puts the node's actual rejection reason in the
+        // body, and discarding it turns "your fee is too low" into "HTTP 400".
+        E::HttpResponse { status, message } => {
+            let detail = message.trim();
+            if detail.is_empty() {
+                ChainError::Unreachable(format!("{host} returned HTTP {status}"))
+            } else {
+                ChainError::Rejected(format!("{host}: {detail}"))
+            }
         }
         E::Reqwest(re) => {
             let what = if re.is_timeout() {
@@ -143,7 +150,44 @@ impl ChainSource for EsploraChain {
         _permit: &BroadcastPermit,
     ) -> Result<Txid, ChainError> {
         // The permit proves the fork probe returned ConfirmedEcx for this endpoint.
-        self.client.broadcast(tx).await.map_err(|e| self.err(e))?;
-        Ok(tx.compute_txid())
+        //
+        // Posted directly rather than through `esplora-client`, which sends no `Content-Type`
+        // header at all. Some Esplora deployments require `text/plain` and, without it, never
+        // hand the body to the node — explorer.alpha.ecash.ninja answers a bare POST with
+        // `sendrawtransaction RPC error: {\"code\":-1}` for *any* input, valid or not, while
+        // the same bytes with `text/plain` are parsed and judged on their merits.
+        let hex = bitcoin::consensus::encode::serialize_hex(tx);
+        let url = format!("{}/tx", self.profile.esplora_url.trim_end_matches('/'));
+
+        let response = reqwest::Client::new()
+            .post(&url)
+            .header(reqwest::header::CONTENT_TYPE, "text/plain")
+            .body(hex)
+            .send()
+            .await
+            .map_err(|e| ChainError::Unreachable(format!("{}: {e}", self.profile.host())))?;
+
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        if !status.is_success() {
+            // The node's reason lives in the body; it is the whole point of the error.
+            return Err(ChainError::Rejected(format!(
+                "{} rejected the transaction: {}",
+                self.profile.host(),
+                body.trim()
+            )));
+        }
+
+        // Esplora answers with the txid. Trust ours over a parsed echo, but flag a mismatch:
+        // it would mean the endpoint published something other than what we sent.
+        let expected = tx.compute_txid();
+        if let Ok(returned) = body.trim().parse::<Txid>() {
+            if returned != expected {
+                return Err(ChainError::Malformed(format!(
+                    "endpoint returned txid {returned}, but we sent {expected}"
+                )));
+            }
+        }
+        Ok(expected)
     }
 }

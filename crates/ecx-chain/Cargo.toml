@@ -10,6 +10,7 @@ description = "ECX chain sources, the fork probe, and the sync gate."
 ecx-core.workspace = true
 bitcoin.workspace = true
 esplora-client.workspace = true
+reqwest.workspace = true
 async-trait.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
