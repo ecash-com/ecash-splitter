@@ -80,6 +80,11 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      # Explicit, because the action's `targets:` input does not reliably survive a cached
+      # toolchain: the second Apple job on the shared runner label came up without the x86_64
+      # std library and failed with "can't find crate for `core`".
+      - run: rustup target add ${{ matrix.target }}
+
       # See the Verify job: USB HID, not GPUI.
       - name: USB dependencies (Linux)
         if: runner.os == 'Linux'
@@ -124,6 +129,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+
+      # Explicit, because the action's `targets:` input does not reliably survive a cached
+      # toolchain: the second Apple job on the shared runner label came up without the x86_64
+      # std library and failed with "can't find crate for `core`".
+      - run: rustup target add ${{ matrix.target }}
 
       # GPUI compiles Metal shaders in a build script and fails without this, before a single
       # Rust crate compiles. Not bundled with the Xcode Command Line Tools.
