@@ -242,8 +242,8 @@ jobs:
             echo
             echo "## Notes"
             echo
-            echo "- **Alphanet only.** Alpha and beta coins are destroyed and re-issued at full"
-            echo "  launch (block 973,728), so nothing split now is durable value."
+            echo "- **Betanet only.** Betanet coins are destroyed and re-issued at the real"
+            echo "  eCash fork, so nothing split now is durable value — this is a rehearsal."
             echo "- Binaries are **unsigned**. See the README for how to allow them to run on"
             echo "  macOS and Windows — the steps differ by OS version."
             echo "- The GUI and CLI ship separately. \`ecx\` has no GPUI dependency and runs headless."
@@ -251,7 +251,7 @@ jobs:
               echo "- ⚠️ Some GUI targets failed to build; only the artifacts listed below are available."
             fi
           } > "$notes"
-          # Pre-release, deliberately: alphanet coins do not survive full launch, and the
+          # Pre-release, deliberately: betanet coins do not survive the real fork, and the
           # binaries are unsigned. Drop the flag when that stops being true.
           gh release create "$GITHUB_REF_NAME" dist/* \
             --title "$GITHUB_REF_NAME" --notes-file "$notes" --verify-tag --prerelease

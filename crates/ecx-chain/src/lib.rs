@@ -116,19 +116,21 @@ impl ForkProbe {
 /// block exists, without waiting for a release.
 pub const ENV_BITCOIN_FORK_HASH: &str = "ECX_BITCOIN_FORK_HASH";
 
-/// Bitcoin mainnet's block hash at [`ECASH_HEIGHT`], compiled in.
+/// Bitcoin mainnet's block hash at [`ECASH_HEIGHT`] — betanet's fork height, 967,680.
 ///
-/// Read 2026-08-25 from blockstream.info and mempool.space independently, both agreeing, with
-/// Bitcoin's tip at 964,003 — comfortably past the fork height.
+/// Read 2026-09-21 from blockstream.info and mempool.space independently, both agreeing, with
+/// Bitcoin's tip at 968,014 — past the fork height, so this block is final.
 ///
-/// For comparison, ECX alphanet's block at the same height is
-/// `0000000000b360c17636b7a6c366e3effbe91a847eb5d61b7a7b29476439e924` — note the shorter run of
-/// leading zeros, which is the difficulty reset at the fork showing through.
+/// For comparison, ECX betanet's block at the same height is
+/// `00000000000000030101ba5cfea54b22becc79f95dc6040beb76e01dd9d04042` — note the shorter run of
+/// leading zeros, which is the difficulty reset at the fork showing through. Betanet's block at
+/// 967,679, the last block the two chains share, is identical on both.
 ///
-/// **Update this per phase.** Each launch forks at its own height, and a stale value here means
-/// the probe compares against the wrong block.
+/// **Update this with every fork.** Each launch forks at its own height, and a stale value here
+/// means the probe compares against the wrong block — which is how a Bitcoin endpoint gets
+/// cleared for broadcast.
 pub const BITCOIN_HASH_AT_FORK: Option<&str> =
-    Some("00000000000000000001769d9a327f5b455aa8a2dd407b1b63040d2a9f832d32");
+    Some("0000000000000000000161354016172f2a377610d52dd46d0f68a919333458cd");
 
 /// Bitcoin's hash at the fork height: from the environment if set, otherwise compiled in.
 ///
@@ -377,7 +379,7 @@ mod tests {
 
     #[test]
     fn a_mid_sync_indexer_is_not_trusted() {
-        // explorer.alpha.ecash.ninja was here earlier on 2026-08-21, replaying old blocks.
+        // explorer.alpha.ecash.ninja was here on 2026-08-21, replaying old blocks from genesis.
         let stale = TipInfo {
             height: 458_330,
             time: (NOW - 5 * 365 * 24 * 3600) as u32,
@@ -392,10 +394,10 @@ mod tests {
 
     #[test]
     fn a_caught_up_pre_fork_indexer_is_trusted() {
-        // The same host later the same day: below ECASH_HEIGHT only because the fork block does
-        // not exist yet, but sitting on the real chain tip. Empty results here are trustworthy.
+        // An indexer below ECASH_HEIGHT only because the fork block does not exist yet, but
+        // sitting on the real chain tip. Empty results here are trustworthy.
         let fresh = TipInfo {
-            height: 963_466,
+            height: 967_466,
             time: (NOW - 600) as u32,
         };
         assert!(ScanReadiness::assess(fresh, NOW).may_report_balance());
@@ -431,16 +433,23 @@ mod tests {
     #[test]
     fn the_compiled_in_reference_parses_and_is_bitcoins_not_ecashs() {
         let hash = bitcoin_hash_at_fork().expect("a reference is compiled in");
-        // Guards a paste error: ECX alphanet's block at the same height, which would make the
+        // Guards a paste error: ECX betanet's block at the same height, which would make the
         // probe clear Bitcoin and reject eCash — exactly backwards.
         assert_ne!(
             hash.to_string(),
-            "0000000000b360c17636b7a6c366e3effbe91a847eb5d61b7a7b29476439e924",
-            "that is ECX's hash at the fork height, not Bitcoin's"
+            "00000000000000030101ba5cfea54b22becc79f95dc6040beb76e01dd9d04042",
+            "that is ECX betanet's hash at the fork height, not Bitcoin's"
+        );
+        // Guards the other paste error: the reference for alphanet's fork height, 963,648.
+        // Stale here means the probe compares betanet against the wrong block entirely.
+        assert_ne!(
+            hash.to_string(),
+            "00000000000000000001769d9a327f5b455aa8a2dd407b1b63040d2a9f832d32",
+            "that is Bitcoin's hash at alphanet's fork height, not betanet's"
         );
         assert_eq!(
             hash.to_string(),
-            "00000000000000000001769d9a327f5b455aa8a2dd407b1b63040d2a9f832d32"
+            "0000000000000000000161354016172f2a377610d52dd46d0f68a919333458cd"
         );
     }
 

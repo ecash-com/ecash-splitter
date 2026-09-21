@@ -17,11 +17,16 @@ use std::collections::{BTreeMap, BTreeSet};
 use bitcoin::{Amount, OutPoint, Psbt, Sequence, Transaction, TxOut, absolute::LockTime};
 
 // ---------------------------------------------------------------------------
-// Consensus facts. Verified against ecash-com/bitcoin @ alphanet on 2026-08-20.
+// Consensus facts. Verified against ecash-com/bitcoin @ betanet on 2026-09-21.
 // ---------------------------------------------------------------------------
 
-/// `consensus.EcashHeight` — `src/kernel/chainparams.cpp:82`. `2016 * 478`, a retarget boundary.
-pub const ECASH_HEIGHT: u32 = 963_648;
+/// The launch this build targets. **Changing this is the fork migration** — see [`Network`].
+pub const NETWORK: Network = BETANET;
+
+/// `consensus.EcashHeight` — `src/kernel/chainparams.cpp:82`. `2016 * 480`, a retarget boundary.
+///
+/// Read from [`NETWORK`] so the height and the rest of the chain's identity cannot drift apart.
+pub const ECASH_HEIGHT: u32 = NETWORK.fork_height;
 
 /// The magic `nLockTime` that makes a transaction final on ECX and permanently non-final on
 /// Bitcoin. `LOCKTIME_THRESHOLD - 1`; see `IsFinalTx`, `src/consensus/tx_verify.cpp:19`.
@@ -31,37 +36,52 @@ pub const ECX_MAGIC_LOCKTIME: u32 = 499_999_999;
 /// `IsFinalTx` ignore the locktime entirely — and the transaction would replay onto Bitcoin.
 pub const ECX_SEQUENCE: Sequence = Sequence(0xFFFF_FFFD);
 
-/// Launch phases. Alpha and beta coins are destroyed and re-issued at full launch, so the phase
-/// is a product-level fact, not trivia: a user who splits during alpha is not done.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Phase {
-    /// Before the fork block. ECX and Bitcoin are byte-identical and indistinguishable.
-    PreFork,
-    Alpha,
-    Beta,
-    Full,
+/// One eCash launch.
+///
+/// **Each launch is a separate chain, not a later phase of one chain.** Alphanet forked Bitcoin
+/// at 963,648 with network magic `eca5a104`; betanet forks at 967,680 with `eca5b104`; the real
+/// eCash fork will have its own height and magic again. Each shares Bitcoin's history below its
+/// own fork height and nothing above it, and none of them is a continuation of another.
+///
+/// This used to be a `Phase` enum derived from the chain tip — `at_height(h)` returning
+/// `Alpha`/`Beta`/`Full` as `h` crossed 963,648 / 967,680 / 973,728. That was wrong, and wrong in
+/// the direction that costs money: those are three *different chains'* fork heights, not
+/// milestones on one. Betanet's tip was already 969,951 on 2026-09-21 and climbing fast at reset
+/// difficulty, so it will cross 973,728 — "full launch" — within days, at which point a
+/// height-derived phase would have told a betanet user their throwaway coins were durable.
+///
+/// Which chain you are on is a build-time fact, so it is a constant here and never inferred from
+/// a height.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Network {
+    /// Display name, e.g. `"betanet"`.
+    pub name: &'static str,
+    /// `consensus.EcashHeight` — the block at which this chain diverges from Bitcoin.
+    pub fork_height: u32,
+    /// `pchMessageStart`. Not used for P2P (we speak to an indexer, not the network); it is the
+    /// chain's identity and the quickest way to tell two launches apart in a bug report.
+    pub magic: [u8; 4],
+    /// Whether coins on this chain survive. **False for every pre-launch net**: alpha and beta
+    /// coins are destroyed and re-issued at the real fork, so a user who splits on betanet and
+    /// thinks they are done has been actively misled (`CLAUDE.md` §3).
+    pub coins_are_durable: bool,
 }
 
-pub const ALPHA_HEIGHT: u32 = 963_648;
-pub const BETA_HEIGHT: u32 = 967_680;
-pub const FULL_HEIGHT: u32 = 973_728;
+/// Betanet. `ecash-com/bitcoin` @ `betanet` / `betanet-bridge`, read 2026-09-21:
+/// `consensus.EcashHeight = 967680` (`src/kernel/chainparams.cpp:82`, `2016 * 480`),
+/// `pchMessageStart = eca5b104`, seeds `seed.beta.ecash.ninja` and friends on port 8533.
+pub const BETANET: Network = Network {
+    name: "betanet",
+    fork_height: 967_680,
+    magic: [0xec, 0xa5, 0xb1, 0x04],
+    // Betanet coins are destroyed and re-issued at the real fork. Never durable.
+    coins_are_durable: false,
+};
 
-impl Phase {
-    pub fn at_height(height: u32) -> Self {
-        match height {
-            h if h >= FULL_HEIGHT => Phase::Full,
-            h if h >= BETA_HEIGHT => Phase::Beta,
-            h if h >= ALPHA_HEIGHT => Phase::Alpha,
-            _ => Phase::PreFork,
-        }
-    }
-
-    /// Alpha and beta coins are destroyed and re-issued at full launch. Never present coins from
-    /// those phases as durable value.
-    pub fn coins_are_durable(self) -> bool {
-        matches!(self, Phase::Full)
-    }
-}
+// The real eCash fork gets its own `Network` const here, and [`NETWORK`] is repointed at it.
+// Do not guess its height or magic in advance — read them off the launch branch, and update
+// `ecx_chain::BITCOIN_HASH_AT_FORK` in the same change or the fork probe compares against the
+// wrong block.
 
 // ---------------------------------------------------------------------------
 // Errors

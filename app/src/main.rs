@@ -40,7 +40,7 @@ impl SplitterApp {
             gpui_component::input::InputState::new(window, cx)
                 .placeholder("bc1… — an ECX address you control")
         });
-        let default_profile = ChainProfile::ecx_alpha();
+        let default_profile = ChainProfile::ecx_betanet();
         let endpoint_input = cx.new(|cx| {
             gpui_component::input::InputState::new(window, cx)
                 .placeholder("https://host/api")

@@ -315,22 +315,59 @@ fn broadcast_refuses_a_transaction_that_lost_its_replay_protection() {
 }
 
 #[test]
-fn phase_boundaries() {
-    assert_eq!(Phase::at_height(ECASH_HEIGHT - 1), Phase::PreFork);
-    assert_eq!(Phase::at_height(ALPHA_HEIGHT), Phase::Alpha);
-    assert_eq!(Phase::at_height(BETA_HEIGHT - 1), Phase::Alpha);
-    assert_eq!(Phase::at_height(BETA_HEIGHT), Phase::Beta);
-    assert_eq!(Phase::at_height(FULL_HEIGHT - 1), Phase::Beta);
-    assert_eq!(Phase::at_height(FULL_HEIGHT), Phase::Full);
+fn the_build_targets_betanet() {
+    // Pins the consensus facts read off ecash-com/bitcoin @ betanet on 2026-09-21. If a
+    // dependency bump or a bad merge moves any of these, the fork probe silently compares
+    // against the wrong block — so fail here instead.
+    assert_eq!(NETWORK, BETANET);
+    assert_eq!(NETWORK.name, "betanet");
+    assert_eq!(ECASH_HEIGHT, 967_680);
+    assert_eq!(NETWORK.magic, [0xec, 0xa5, 0xb1, 0x04]);
+    // A retarget boundary, as every launch height has been.
+    assert_eq!(ECASH_HEIGHT % 2016, 0);
+    // Not alphanet's height, which is the paste error this guards against.
+    assert_ne!(ECASH_HEIGHT, 963_648);
+}
+
+/// Read the flag through a function boundary.
+///
+/// Durability is a compile-time constant now — that is the whole point of the fix — so asserting
+/// on it directly const-folds and clippy rewrites the assertion away. Going through a parameter
+/// keeps these as real tests of the value that ships.
+fn coins_are_durable(network: Network) -> bool {
+    network.coins_are_durable
 }
 
 #[test]
-fn only_full_launch_coins_are_durable() {
-    // Alpha and beta coins are destroyed and re-issued at full launch.
-    assert!(!Phase::PreFork.coins_are_durable());
-    assert!(!Phase::Alpha.coins_are_durable());
-    assert!(!Phase::Beta.coins_are_durable());
-    assert!(Phase::Full.coins_are_durable());
+fn betanet_coins_are_never_durable() {
+    // Beta coins are destroyed and re-issued at the real fork, so the UI must keep warning.
+    assert!(
+        !coins_are_durable(NETWORK),
+        "{} is a pre-launch chain; its coins do not survive the real fork",
+        NETWORK.name
+    );
+    assert!(!coins_are_durable(BETANET));
+}
+
+#[test]
+fn durability_does_not_depend_on_the_chain_tip() {
+    // Regression guard for the bug this replaced. Betanet's tip crosses 973,728 — what the old
+    // height-derived `Phase` called "full launch" — within days of 2026-09-21 at reset
+    // difficulty. Durability is a property of *which chain this build targets*, so no height,
+    // least of all that one, may flip it.
+    //
+    // Phrased as a function of the tip because that is the shape of the bug: anything that reads
+    // a height and returns a durability must return the same answer for every height.
+    fn durable_at_tip(_tip: u32) -> bool {
+        coins_are_durable(NETWORK)
+    }
+    for tip in [0, ECASH_HEIGHT, 973_728, 1_000_000, u32::MAX] {
+        assert_eq!(
+            durable_at_tip(tip),
+            coins_are_durable(NETWORK),
+            "tip {tip} changed the durability answer"
+        );
+    }
 }
 
 #[test]

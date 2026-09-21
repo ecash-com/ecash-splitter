@@ -94,21 +94,31 @@ build it), Lightning, sidechain deposits, fiat, address book, mobile. See §12.
 
 ---
 
-## 3. ECX facts (verified against `ecash-com/bitcoin` @ `alphanet`, 2026-08-20)
+## 3. ECX facts (verified against `ecash-com/bitcoin` @ `betanet` / `betanet-bridge`, 2026-09-21)
+
+**This app targets betanet. Alphanet is no longer supported** (retargeted 2026-09-21).
 
 Full treatment lives in `../ecash-electrum/CLAUDE.md`. The subset that binds this app:
 
 | | |
 |---|---|
-| `consensus.EcashHeight` | **963648** (`src/kernel/chainparams.cpp:82`) — `2016 × 478`, a retarget boundary |
-| Alpha / Beta / Full | 963,648 (2026-08-23) / 967,680 (2026-09-20) / **973,728 (2026-10-31)** |
-| Magic locktime | **499999999** = `LOCKTIME_THRESHOLD - 1` |
-| P2P magic / port | `0xeca5a104` / 8533 |
+| `consensus.EcashHeight` | **967680** (`src/kernel/chainparams.cpp:82`) — `2016 × 480`, a retarget boundary |
+| Magic locktime | **499999999** = `LOCKTIME_THRESHOLD - 1` — **unchanged on betanet**, re-read 2026-09-21 |
+| P2P magic / port | `0xeca5b104` / 8533 |
+| Bitcoin's hash at the fork | `0000000000000000000161354016172f2a377610d52dd46d0f68a919333458cd` |
+| Betanet's hash at the fork | `00000000000000030101ba5cfea54b22becc79f95dc6040beb76e01dd9d04042` |
 | Address & key encoding | **byte-identical to Bitcoin** — P2PKH `0x00`, P2SH `0x05`, WIF `128`, xpub `0x0488B21E`, bech32 HRP `bc`, Bitcoin's genesis hash |
 | SLIP-44 coin type | none of its own → **`0'`**, the user's real Bitcoin account |
 
+**Each launch is a separate chain, not a later phase of one chain.** Alphanet forked Bitcoin at
+963,648 with magic `eca5a104`; betanet forks at **967,680** with `eca5b104`; the real eCash fork
+will have its own height and magic again. Each shares Bitcoin's history below its own fork height
+and nothing above it. Treating 963,648 / 967,680 / 973,728 as milestones on one chain is a
+mistake this codebase made once and no longer makes — see the phase-gating note below.
+
 **Replay protection is a magic `nLockTime`, nothing more.** `IsFinalTx`
-(`src/consensus/tx_verify.cpp:19` on `alphanet`) short-circuits:
+(`src/consensus/tx_verify.cpp:19`, identical on `alphanet`, `betanet` and `betanet-bridge`)
+short-circuits:
 
 ```cpp
 if (tx.nLockTime == 0 || tx.nLockTime == LOCKTIME_THRESHOLD - 1)
@@ -131,14 +141,24 @@ Two more, relevant but not to the transaction we build: difficulty resets to `bn
 fork block (`src/pow.cpp:81-83`), and 220 reassigned Satoshi-era transactions are whitelisted in
 `src/repo_txns.h`.
 
-> **Re-verify the replay scheme per phase.** Earlier drynets used a magic tx *version*
-> (`0x00BFBF3F`) instead of locktime. Before each phase, diff `tx_verify.cpp` on the launch branch
-> and check https://drivechain.info/dev.txt. Bake the check into CI if possible.
+> **Re-verify the replay scheme per fork.** Earlier drynets used a magic tx *version*
+> (`0x00BFBF3F`) instead of locktime. Before each fork, diff `tx_verify.cpp` on the launch branch
+> and check https://drivechain.info/dev.txt and https://drivechain.dev/config. Bake the check
+> into CI if possible. **Done for betanet 2026-09-21: `IsFinalTx` is byte-identical to
+> alphanet's, so the magic locktime still holds.**
 
-**Phase gating is a product requirement, not a nicety.** Alpha and beta coins are destroyed and
-re-issued at full launch (2026-10-31). The app must know the current phase, display it, and
-refuse to present alpha/beta output as durable value. A user who splits during alpha and thinks
-they are done has been actively misled.
+**Durability gating is a product requirement, not a nicety.** Pre-launch coins — alpha's, and now
+betanet's — are destroyed and re-issued at the real fork. The app must name the chain it targets,
+display it, and refuse to present its output as durable value. A user who splits on betanet and
+thinks they are done has been actively misled.
+
+**Durability is a property of which chain the build targets, never of the chain tip.** It was
+briefly derived from the tip: a `Phase` enum returning `Alpha`/`Beta`/`Full` as the height
+crossed 963,648 / 967,680 / 973,728. That is wrong, because those are three *different chains'*
+fork heights. Betanet's tip was 969,951 on 2026-09-21 against Bitcoin's 968,014 — it mines ahead
+at reset difficulty and crosses 973,728 within days, at which point a tip-derived phase would
+have announced "full launch" on a throwaway chain and told the user their coins were durable.
+`ecx_core::NETWORK` is a constant for this reason; do not reintroduce a height-derived phase.
 
 ---
 
@@ -471,8 +491,10 @@ Three failure modes to handle explicitly rather than paper over:
 1. **A partially-synced indexer looks exactly like an empty wallet.** This is Golden Rule 9 and
    it is not hypothetical — `explorer.alpha.ecash.ninja` was at height 458,330 on 2026-08-20,
    less than halfway to the fork. Scanning it today returns "no history" for funded accounts.
-   Gate every result on `tip >= EcashHeight`; below it show `syncing — 458,330 / 963,648` and
-   state no balance at all.
+   Gate every result on `tip >= EcashHeight`; below it show `syncing — 458,330 / 967,680` and
+   state no balance at all. (Betanet's own endpoints were past the fork at 969,951 on
+   2026-09-21, so this gate is currently satisfied — which is exactly when it stops being
+   visible and starts being easy to break.)
 2. **Non-standard paths get warnings or refusals** from the device. Auto-discovery stays on the
    four standard purposes; manual entry is advanced-only and may prompt on-device.
 
@@ -500,23 +522,30 @@ height} so the backend is a constructor change — but do not add speculative im
 3. Difficulty resets to minimum at the fork block, so early ECX reorg risk is elevated and a
    light client's header-chain assumptions are weakest exactly when we need them.
 
-**Known endpoints (2026-08-20, all pre-launch and volatile — re-check every phase):**
+**Known betanet endpoints (2026-09-21, from https://drivechain.dev/config — volatile, re-check
+every fork):**
 
 | Endpoint | Status |
 |---|---|
-| `https://explorer.alpha.ecash.ninja` | **live**, Esplora-compatible API, tip 458330 (still syncing from genesis) |
-| `https://esplora.alpha.ecash.ninja` | DNS resolves, 502 — not up yet |
-| `ssl://drynet4.drivechain.dev:50002` | electrs, port open, drynet4-era |
-| `seed.alpha.ecash.ninja:8533` | P2P seed, open |
+| `https://esplora.beta.ecash.ninja` | **live**, tip 969,951. Serves Esplora at the **root, not `/api`**. Also serves `/fee-estimates` |
+| `https://explorer.beta.ecash.ninja/api` | **live**, tip 969,951. `/fee-estimates` 404s |
+| `ssl://explorer.beta.ecash.ninja:50002` | electrs, port open |
+| `seed.beta.ecash.ninja:8533` | P2P seed, open |
 
-Naming convention is `*.alpha.ecash.ninja`; expect `*.beta.` and a mainnet set per phase.
+Both HTTP endpoints were verified against `/scripthash/{hash}/txs` (`200 []`), the endpoint
+`bdk_esplora` actually scans with — not merely `/blocks/tip/height`. That distinction is the
+mempool.space trap below, and `esplora.alpha.ecash.ninja` failed it for alphanet's whole life.
+
+Naming convention is `*.beta.ecash.ninja`; expect a mainnet set at the real fork. **Mind the
+`/api` split**: `explorer.*` mounts the API under `/api`, `esplora.*` serves it at the root, so a
+blanket "append `/api`" is wrong — see `normalize_api` in `ecx-chain/src/profile.rs`.
 
 ### The fork probe (Golden Rule 4)
 
 Before an endpoint is usable, prove it is ECX and not Bitcoin. ECX and BTC share every block up
 to `EcashHeight - 1` and **diverge from `EcashHeight` onward**, so:
 
-1. Fetch the block hash at height `963648` from the candidate endpoint.
+1. Fetch the block hash at height `967680` from the candidate endpoint.
 2. Compare against Bitcoin mainnet's hash at that height (bundled as a constant, refreshed per
    phase).
 3. **Equal → it is a Bitcoin endpoint. Refuse, permanently, with a specific error.**
@@ -560,7 +589,7 @@ improvise (Golden Rule 6: ECX side first, always).
    broadcast only to an endpoint that passed the fork probe (Golden Rule 4).
 9. **Wait for depth.** Post-fork difficulty is at minimum, so reorg risk is elevated — require
    meaningfully more confirmations than 6 and say why. **CONFIRM** the number against observed
-   alpha block times before release.
+   betanet block times before release.
 10. **Hand off** — export the ECX destination descriptor for `ecash-electrum` / eCash.com Wallet,
     with the standing rule that every future ECX transaction keeps `nLockTime = 499999999`.
 
@@ -660,7 +689,7 @@ Framework-agnostic — these hold whichever way §4 lands.
 - **Persistent ECX badge and fork-phase chip** at every money-touching surface, in ECX's own
   color, visually unmistakable from Bitcoin orange (mirrors `ecash-wallet-mobile` Golden Rule 6).
   The user must never have to remember which chain they are on.
-- **Never state a balance from an unsynced chain source.** Show `syncing — 458,330 / 963,648`
+- **Never state a balance from an unsynced chain source.** Show `syncing — 458,330 / 967,680`
   instead. "No coins found" is a claim, and below `EcashHeight` it is a false one (Golden Rule 9).
 - **Never block the render loop on a device.** Every device and chain operation runs in the
   background and delivers results over a channel; every device operation has a visible

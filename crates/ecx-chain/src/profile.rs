@@ -1,14 +1,14 @@
 //! Chain endpoints.
 //!
-//! # Changing endpoints between fork phases
+//! # Changing endpoints between forks
 //!
-//! These hosts move every phase — drynet → alpha → beta → mainnet — so they are deliberately easy
+//! These hosts move every fork — drynet → alpha → beta → mainnet — so they are deliberately easy
 //! to change in three ways, in increasing order of permanence:
 //!
 //! 1. **At runtime.** The GUI has an editable endpoint field; the CLI takes `--endpoint`.
 //! 2. **By environment**, without touching the binary or the UI:
 //!    ```sh
-//!    ECX_ESPLORA_URL=https://esplora.beta.ecash.ninja/api \
+//!    ECX_ESPLORA_URL=https://esplora.beta.ecash.ninja \
 //!    ECX_EXPLORER_URL=https://explorer.beta.ecash.ninja \
 //!    cargo run -p ecash-splitter
 //!    ```
@@ -24,7 +24,7 @@ pub const ENV_ESPLORA_URL: &str = "ECX_ESPLORA_URL";
 pub const ENV_EXPLORER_URL: &str = "ECX_EXPLORER_URL";
 
 // ---------------------------------------------------------------------------
-// THE ONE PLACE HOSTNAMES ARE WRITTEN — update this per fork phase.
+// THE ONE PLACE HOSTNAMES ARE WRITTEN — update this per fork.
 // ---------------------------------------------------------------------------
 
 /// Built-in endpoints offered in the UI.
@@ -32,14 +32,25 @@ pub const ENV_EXPLORER_URL: &str = "ECX_EXPLORER_URL";
 /// `esplora_url` is the API base; `explorer_url` is the human-facing site a transaction link
 /// points at. They are usually the same host, but need not be.
 ///
-/// Only one entry: `esplora.alpha.ecash.ninja` was listed here until 2026-08-21 but never
-/// answered (502, then 404), and an endpoint that cannot serve a request is worse than no button.
+/// **Betanet.** Both entries were verified on 2026-09-21 against the endpoints `bdk_esplora`
+/// actually scans with — `/scripthash/{hash}/txs` returning `200 []`, not merely
+/// `/blocks/tip/height` — which is the check `esplora.alpha.ecash.ninja` and mempool.space both
+/// failed. Both reported tip 969,951 and agreed on the fork block at 967,680.
+///
+/// Note the first entry's API base has **no `/api` suffix**: `esplora.beta.ecash.ninja` serves
+/// Esplora at the root. It is listed first because it also serves `/fee-estimates`, which
+/// `explorer.beta.ecash.ninja` answers with a 404.
 pub const PRESETS: &[(&str, &str, &str)] = &[
     // (display name, esplora API base, explorer site)
     (
-        "ECX alpha",
-        "https://explorer.alpha.ecash.ninja/api",
-        "https://explorer.alpha.ecash.ninja",
+        "ECX betanet",
+        "https://esplora.beta.ecash.ninja",
+        "https://explorer.beta.ecash.ninja",
+    ),
+    (
+        "ECX betanet (explorer)",
+        "https://explorer.beta.ecash.ninja/api",
+        "https://explorer.beta.ecash.ninja",
     ),
 ];
 
@@ -71,16 +82,16 @@ pub enum ProfileKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChainProfile {
     pub name: Cow<'static, str>,
-    /// Esplora API base, e.g. `https://explorer.alpha.ecash.ninja/api`.
+    /// Esplora API base, e.g. `https://esplora.beta.ecash.ninja`.
     pub esplora_url: Cow<'static, str>,
-    /// Human-facing explorer, e.g. `https://explorer.alpha.ecash.ninja`.
+    /// Human-facing explorer, e.g. `https://explorer.beta.ecash.ninja`.
     pub explorer_url: Cow<'static, str>,
     pub kind: ProfileKind,
 }
 
 impl ChainProfile {
     /// The first preset, with [`ENV_ESPLORA_URL`] / [`ENV_EXPLORER_URL`] applied if set.
-    pub fn ecx_alpha() -> Self {
+    pub fn ecx_betanet() -> Self {
         let (name, esplora, explorer) = PRESETS[0];
         let mut profile = Self {
             name: Cow::Borrowed(name),
@@ -113,8 +124,8 @@ impl ChainProfile {
     /// A user-supplied Esplora base URL.
     ///
     /// Trailing slashes and an accidentally-omitted `/api` are common enough to fix silently
-    /// rather than fail with a confusing 404. The explorer is assumed to be the same host with
-    /// `/api` removed, which holds for every Esplora deployment we have seen.
+    /// rather than fail with a confusing 404 — except on a host that serves Esplora at its root,
+    /// where adding `/api` is what *causes* the 404. See [`normalize_api`].
     pub fn custom(url: &str) -> Self {
         let esplora = normalize_api(url);
         let explorer = strip_api(&esplora).to_string();
@@ -129,7 +140,7 @@ impl ChainProfile {
     /// Built-in endpoints offered in the UI, with environment overrides applied.
     pub fn presets() -> Vec<Self> {
         if std::env::var(ENV_ESPLORA_URL).is_ok_and(|v| !v.trim().is_empty()) {
-            return vec![Self::ecx_alpha()];
+            return vec![Self::ecx_betanet()];
         }
         PRESETS
             .iter()
@@ -179,17 +190,39 @@ impl ChainProfile {
 
 impl Default for ChainProfile {
     fn default() -> Self {
-        Self::ecx_alpha()
+        Self::ecx_betanet()
     }
 }
 
+/// Make a user-supplied URL into an Esplora API base.
+///
+/// Most deployments mount the API under `/api` on the explorer host, and users routinely paste
+/// the explorer URL without it, so we append it. **But some serve Esplora at the root**, and
+/// appending there produces exactly the 404 this is meant to prevent:
+///
+/// ```text
+/// https://esplora.beta.ecash.ninja/blocks/tip/height      -> 200 969951
+/// https://esplora.beta.ecash.ninja/api/blocks/tip/height  -> 404 endpoint does not exist
+/// ```
+///
+/// The two are told apart by the leftmost host label, which is the naming convention across every
+/// eCash net so far: `explorer.*` mounts under `/api`, `esplora.*` serves at the root. A URL that
+/// already carries a path is left alone either way, so an explicit
+/// `https://esplora.example.org/api` is still honoured for a host that wants it.
 fn normalize_api(url: &str) -> String {
     let trimmed = url.trim().trim_end_matches('/');
-    if trimmed.ends_with("/api") {
+    if trimmed.ends_with("/api") || serves_api_at_root(trimmed) {
         trimmed.to_string()
     } else {
         format!("{trimmed}/api")
     }
+}
+
+/// Whether this host serves the Esplora API at its root rather than under `/api`.
+fn serves_api_at_root(url: &str) -> bool {
+    let host = host_of(url);
+    // Only when the URL is a bare host: a path means the user was explicit, so respect it.
+    url.trim_end_matches('/').ends_with(host) && host.starts_with("esplora.")
 }
 
 fn strip_api(url: &str) -> &str {
@@ -228,6 +261,32 @@ mod tests {
     }
 
     #[test]
+    fn an_esplora_host_keeps_its_root_api_base() {
+        // esplora.beta.ecash.ninja serves Esplora at the root; appending /api 404s every call.
+        for input in [
+            "https://esplora.beta.ecash.ninja",
+            "https://esplora.beta.ecash.ninja/",
+            "  https://esplora.beta.ecash.ninja  ",
+        ] {
+            assert_eq!(
+                ChainProfile::custom(input).esplora_url,
+                "https://esplora.beta.ecash.ninja",
+                "input was {input:?}"
+            );
+        }
+        // An explicit /api is still honoured — the user said so.
+        assert_eq!(
+            ChainProfile::custom("https://esplora.example.org/api").esplora_url,
+            "https://esplora.example.org/api"
+        );
+        // An explorer.* host still gets /api appended.
+        assert_eq!(
+            ChainProfile::custom("https://explorer.beta.ecash.ninja").esplora_url,
+            "https://explorer.beta.ecash.ninja/api"
+        );
+    }
+
+    #[test]
     fn the_explorer_is_the_api_base_without_api() {
         let p = ChainProfile::custom("https://explorer.beta.ecash.ninja/api");
         assert_eq!(p.explorer_url, "https://explorer.beta.ecash.ninja");
@@ -238,12 +297,39 @@ mod tests {
     }
 
     #[test]
-    fn the_preset_points_at_a_real_explorer() {
-        // Guards against the api base and the explorer drifting apart when a phase changes.
-        let (_, esplora, explorer) = PRESETS[0];
-        assert_eq!(strip_api(esplora), explorer);
-        assert!(explorer.starts_with("https://"));
-        assert!(!explorer.ends_with('/'));
+    fn every_preset_is_well_formed() {
+        // Guards a fork migration that updates one URL and forgets the other. The api base and
+        // the explorer are deliberately allowed to be different hosts — esplora.beta serves the
+        // API at its root while explorer.beta hosts the human-facing site — so this checks shape
+        // rather than asserting one is derived from the other.
+        assert!(!PRESETS.is_empty());
+        for &(name, esplora, explorer) in PRESETS {
+            assert!(!name.is_empty());
+            for url in [esplora, explorer] {
+                assert!(url.starts_with("https://"), "{url} is not https");
+                assert!(!url.ends_with('/'), "{url} has a trailing slash");
+            }
+            // A preset must survive its own normalizer untouched, or the UI and the env override
+            // would disagree about the same host.
+            assert_eq!(
+                normalize_api(esplora),
+                esplora,
+                "{esplora} is not normalized"
+            );
+        }
+    }
+
+    #[test]
+    fn the_presets_target_the_configured_fork() {
+        // A stale endpoint is the other half of a half-done migration: the fork probe would be
+        // comparing the right block against the wrong chain's indexer.
+        assert_eq!(ecx_core::ECASH_HEIGHT, 967_680);
+        for &(_, esplora, explorer) in PRESETS {
+            for url in [esplora, explorer] {
+                assert!(url.contains(".beta."), "{url} is not a betanet endpoint");
+                assert!(!url.contains(".alpha."), "{url} is still alphanet");
+            }
+        }
     }
 
     #[test]

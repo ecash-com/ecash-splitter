@@ -1,7 +1,14 @@
 # Support status
 
-What works today, what does not, and what each missing piece needs. Written 2026-08-21, updated 2026-08-25 after a real split confirmed on alphanet; check
-`git log` before trusting it. Section references are to [`CLAUDE.md`](../CLAUDE.md).
+What works today, what does not, and what each missing piece needs. Written 2026-08-21; updated
+2026-08-25 after a real split confirmed on alphanet, and **2026-09-21 on the move to betanet**.
+Check `git log` before trusting it. Section references are to [`CLAUDE.md`](../CLAUDE.md).
+
+> **Retargeted to betanet (fork height 967,680) on 2026-09-21.** Alphanet is no longer supported.
+> The endpoints, the fork height and Bitcoin's reference hash all moved; `ecx status` and the
+> fork probe were re-verified live against betanet, and against blockstream.info to confirm a
+> Bitcoin endpoint is still refused. **A full signed sweep has not yet been re-run on betanet** —
+> the end-to-end proof below is alphanet's, and the device matrix is unchanged by the move.
 
 Key: ✅ works · 🟡 implemented, untested on hardware · ⛔ deliberately excluded · ❌ not built
 
@@ -12,13 +19,13 @@ Key: ✅ works · 🟡 implemented, untested on hardware · ⛔ deliberately exc
 | | |
 |---|---|
 | **Frontends** | Desktop (GPUI) ✅ · CLI (`ecx`) ✅ — both share `ecx-split`, neither owns the flow |
-| **Flow** | Connect → discover → select → destination → build → review → sign → verify → **broadcast** ✅ — the whole chain, proven end to end on alphanet |
+| **Flow** | Connect → discover → select → destination → build → review → sign → verify → **broadcast** ✅ — the whole chain, proven end to end on alphanet; not yet re-run on betanet |
 | **Devices** | USB: Ledger ✅ · Coldcard 🟡 · Specter 🟡 · Jade 🟡 · Trezor 🟡 · BitBox02 ❌<br>Air-gap: **parked** — library exists, no UI |
 | **Chain** | Esplora ✅ · Electrum ❌ · compact-filter SPV ⛔ |
 | **Tests** | 52, all passing. 19 of them are the `ecx-core` invariant suite |
 | **Frontend parity** | Both sign, verify, broadcast and adjust search depth. `check` is CLI-only |
 
-### Proven on alphanet, 2026-08-25
+### Proven on alphanet, 2026-08-25 (not yet re-run on betanet)
 
 Real sweeps from a Ledger through **both** frontends, the first confirmed in block 995,593 and
 checked on both chains afterwards:
@@ -171,8 +178,8 @@ fallback preset.
 | 7. Sign | ✅ Both frontends, **both verified on a Ledger** |
 | 8. Verify | ✅ Called on both device shapes before anything is published |
 | 8. Verify signed bytes | ✅ Called by `ecx_split::sign_and_verify`, on both device shapes. `resolve_signed` finalizes a PSBT or takes Trezor's transaction as-is |
-| 9. Broadcast | ✅ Both frontends, gated on the fork probe. **Both proven on alphanet 2026-08-25** |
-| 10. Wait for depth | ❌ Not built. `MIN_CONFIRMATIONS = 30` is a placeholder pending real alpha block times |
+| 9. Broadcast | ✅ Both frontends, gated on the fork probe. **Both proven on alphanet 2026-08-25**; the probe re-verified against betanet 2026-09-21, a full sweep not yet re-run |
+| 10. Wait for depth | ❌ Not built. `MIN_CONFIRMATIONS = 30` is a placeholder pending real betanet block times — betanet was mining ahead of Bitcoin on 2026-09-21 (969,951 vs 968,014), which is the reset difficulty showing |
 | 11. Hand off descriptor | ❌ Not built |
 
 ### Known gaps inside working steps
@@ -184,9 +191,11 @@ fallback preset.
   GUI reconnects per operation and so has never hit this; anything holding a handle across steps
   will.
 
-- **`BITCOIN_HASH_AT_FORK` is `None`.** The fork probe cannot run until Bitcoin mines block
-  963,648 — below that height the two chains are byte-identical and no probe can distinguish
-  them. Fill it in from a trusted Bitcoin source once the height is reached.
+- ~~**`BITCOIN_HASH_AT_FORK` is `None`.**~~ **Resolved 2026-09-21.** Set to Bitcoin's hash at
+  betanet's fork height, 967,680, read from blockstream.info and mempool.space independently with
+  Bitcoin's tip at 968,014. The probe runs, and was confirmed live against both betanet endpoints
+  (`ConfirmedEcx`) and against blockstream.info (`IsBitcoin`, refused). Re-derive it per fork —
+  below the fork height the two chains are byte-identical and no probe can distinguish them.
 - **`display_address` is unimplemented on every device.** Ledger needs a registered wallet policy
   (`register_wallet` + persisted HMAC) for anything but BIP86. Until then a device-derived
   destination cannot be confirmed on the device screen, which is why pasting is the default

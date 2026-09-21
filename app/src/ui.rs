@@ -12,7 +12,7 @@ use gpui_component::{
 };
 
 use ecx_chain::{ChainProfile, ProfileKind, ScanReadiness};
-use ecx_core::{ALPHA_HEIGHT, ECASH_HEIGHT, Phase};
+use ecx_core::{ECASH_HEIGHT, NETWORK};
 use ecx_wallet::DiscoveredAccount;
 
 use crate::SplitterApp;
@@ -880,8 +880,9 @@ fn account_row(
 // ---------------------------------------------------------------------------
 
 pub fn footer(app: &SplitterApp, cx: &App) -> AnyElement {
-    let phase = Phase::at_height(ALPHA_HEIGHT);
-    let durable = phase.coins_are_durable();
+    // Which chain this build targets is a constant, never derived from the tip — betanet's tip
+    // crosses the old "full launch" height within days and must not stop warning (`Network`).
+    let durable = NETWORK.coins_are_durable;
 
     div()
         .flex()
@@ -900,15 +901,16 @@ pub fn footer(app: &SplitterApp, cx: &App) -> AnyElement {
                 .items_center()
                 .gap_2()
                 .child(SharedString::from(format!(
-                    "v{} · fork height {}",
+                    "v{} · {} · fork height {}",
                     env!("CARGO_PKG_VERSION"),
+                    NETWORK.name,
                     thousands(ECASH_HEIGHT)
                 )))
                 .child("·")
                 .children((!durable).then(|| {
                     div()
                         .text_color(cx.theme().warning)
-                        .child("alpha coins are destroyed and re-issued at full launch")
+                        .child("betanet coins are destroyed and re-issued at the real fork")
                         .into_any_element()
                 })),
         )

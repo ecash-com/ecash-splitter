@@ -7,15 +7,17 @@ Not a wallet. It builds a replay-protected sweep, has a hardware device sign it,
 bytes that come back, and broadcasts to ECX. Available as a desktop app and a CLI — both share
 the same core, so they behave identically.
 
-> **Alphanet.** Configured for the alpha fork at block 963,648, which activated on 2026-08-23.
-> The full flow works, broadcast included, and has been run end to end against a Ledger with the
-> result confirmed on-chain. `ecx status` confirms the endpoint is provably eCash.
-> **Alpha and beta coins are destroyed and re-issued at full launch** (973,728, 2026-10-31), so
-> nothing produced now is durable value.
+> **Betanet.** Configured for the betanet fork at block **967,680**, which is live: betanet was
+> at tip 969,951 on 2026-09-21, past its own fork block, and `ecx status` reports the endpoint as
+> provably eCash. The full flow works, broadcast included.
+> **Betanet coins are destroyed and re-issued at the real fork**, so nothing produced now is
+> durable value — splitting here is a rehearsal, not a claim.
 >
-> Each phase forks at its own height against its own Bitcoin block. Moving to beta or to the real
-> launch means updating `ECASH_HEIGHT`, `BITCOIN_HASH_AT_FORK` and the endpoint — see
-> [Changing endpoints between fork phases](#changing-endpoints-between-fork-phases).
+> Each launch is a **separate chain, not a later phase of one chain**: alphanet forked Bitcoin at
+> 963,648 with network magic `eca5a104`, betanet forks at 967,680 with `eca5b104`, and the real
+> eCash fork will have its own height and magic again. Moving to it means updating
+> `ECASH_HEIGHT`, `BITCOIN_HASH_AT_FORK` and the endpoint together — see
+> [Moving to the next fork](#moving-to-the-next-fork).
 
 ## Install a release
 
@@ -134,7 +136,7 @@ cargo run -p ecash-splitter-cli -- <command>
 | Command | What it does |
 |---|---|
 | `devices` | List connected hardware wallets |
-| `status` | Chain tip, whether it is caught up, and how far off the fork is |
+| `status` | Which chain this build targets, the tip, whether it is caught up, whether the endpoint is provably eCash, and whether its coins are durable |
 | `discover` | Find accounts with coins on the connected device |
 | `build --account <PATH> --to <ADDRESS>` | Build the sweep PSBT and print it |
 | `sign --to <ADDRESS>` | Build, show the PSBT, confirm, sign on the device, verify. Add `--broadcast` to publish |
@@ -147,6 +149,12 @@ address type), `--gap <N>`, `--feerate <SAT_PER_VB>`, `--psbt-out <FILE>`, `--br
 ```sh
 # is the endpoint reachable, caught up, and provably eCash?
 cargo run -p ecash-splitter-cli -- status
+# network  : betanet
+# tip      : 969951 (unix 1790005799)
+# status   : caught up
+# fork     : block 967680 (activated)
+# coins    : NOT DURABLE — betanet coins are destroyed and re-issued at the real fork
+# broadcast: allowed — endpoint proven to be eCash
 
 # find your accounts
 cargo run -p ecash-splitter-cli -- discover
@@ -167,9 +175,9 @@ cargo run -p ecash-splitter-cli -- track --txid <TXID>
 Without `--broadcast`, `sign` stops after verifying and prints the signed hex — publish it later
 with `broadcast --tx <HEX>`. With it, the fork probe has to clear first or nothing is sent.
 
-## Changing endpoints between fork phases
+## Changing endpoints between forks
 
-These hosts move every phase — drynet → alpha → beta → mainnet — so they are changeable three
+These hosts move every fork — drynet → alpha → beta → mainnet — so they are changeable three
 ways, in increasing order of permanence:
 
 ```sh
@@ -177,7 +185,7 @@ ways, in increasing order of permanence:
 cargo run -p ecash-splitter-cli -- status --endpoint https://explorer.beta.ecash.ninja
 
 # 2. by environment, no rebuild and no UI fiddling
-ECX_ESPLORA_URL=https://explorer.beta.ecash.ninja/api cargo run -p ecash-splitter
+ECX_ESPLORA_URL=https://esplora.beta.ecash.ninja cargo run -p ecash-splitter
 ```
 
 3. **In code** — `PRESETS` in `crates/ecx-chain/src/profile.rs` is the only place a hostname is
@@ -194,21 +202,38 @@ ECX_BITCOIN_FORK_HASH=<bitcoin's hash at the fork height> cargo run -p ecash-spl
 Take it from an independent Bitcoin source, **never from an eCash endpoint** — comparing a chain
 against itself would clear anything. With no reference set, broadcasting is refused.
 
-### Moving to the next phase
+### Moving to the next fork
 
-Three values change together, and they must agree:
+Three values change together, and they must agree. Change one and not the others and the fork
+probe compares the right block against the wrong chain:
 
 | Value | Where |
 |---|---|
-| `ECASH_HEIGHT` | `crates/ecx-core/src/lib.rs` |
-| `BITCOIN_HASH_AT_FORK` — Bitcoin's hash at that height | `crates/ecx-chain/src/lib.rs` |
+| `NETWORK` — the chain's height, magic and whether its coins are durable | `crates/ecx-core/src/lib.rs` |
+| `BITCOIN_HASH_AT_FORK` — **Bitcoin's** hash at that height | `crates/ecx-chain/src/lib.rs` |
 | The endpoint | `PRESETS` in `crates/ecx-chain/src/profile.rs` |
 
-`ecx status` is the check: it reports whether the endpoint is provably eCash.
+Read the height and magic off the launch branch of `ecash-com/bitcoin` rather than guessing them
+— and re-check that the replay scheme is still the magic `nLockTime` while you are there, since
+earlier drynets used a magic transaction *version* instead. `ECASH_HEIGHT` is derived from
+`NETWORK`, so the height and the rest of the chain's identity cannot drift apart.
 
-`/api` is appended if omitted and trailing slashes are trimmed, so either form works. The
-explorer link is derived from the API base by removing `/api`; override it separately with
-`ECX_EXPLORER_URL` if they ever differ.
+Durability is a property of **which chain the build targets**, never of the chain tip. It used to
+be derived from the tip — a `Phase` enum returning `Alpha`/`Beta`/`Full` as the height crossed
+963,648 / 967,680 / 973,728 — which is wrong, because those are three different chains' fork
+heights rather than milestones on one. Betanet's tip crosses 973,728 within days of 2026-09-21 at
+reset difficulty, and a tip-derived phase would then have told a betanet user their throwaway
+coins were durable.
+
+`ecx status` is the check: it names the network, reports whether the endpoint is provably eCash,
+and says plainly when coins are not durable.
+
+`/api` is appended to an endpoint URL if omitted and trailing slashes are trimmed, so either form
+works — **except on a host that serves Esplora at its root**, where appending `/api` is what
+causes the 404. `esplora.beta.ecash.ninja` is one of those, so hosts whose name begins `esplora.`
+are left at their root while `explorer.*` hosts get `/api`. Pass a path explicitly to override
+the guess. The explorer link is derived from the API base by removing `/api`; the two are
+different hosts on betanet, so set `ECX_EXPLORER_URL` separately when it matters.
 
 Changing a URL never loosens safety: every endpoint is still gated by the fork probe before
 anything is broadcast.
@@ -259,10 +284,10 @@ One version, in `[workspace.package]` at the repo root. Every crate inherits it 
 `version.workspace = true`, and it reaches the user in three places:
 
 ```sh
-ecx --version                    # ecx 0.1.0
+ecx --version                    # ecx 0.2.0
 ```
 
-the GUI footer (`v0.1.0 · fork height 963,648`), and `CFBundleShortVersionString` in the macOS
+the GUI footer (`v0.2.0 · betanet · fork height 967,680`), and `CFBundleShortVersionString` in the macOS
 `.app`, which `contrib/bundle-macos.sh` reads from the same root. Bump it once; tag the release
 to match.
 

@@ -34,7 +34,7 @@ COMMANDS:
     track --txid <TXID>         How deeply buried a broadcast transaction is
 
 OPTIONS:
-    --endpoint <URL>            eCash Esplora base URL (default: the ECX alpha preset)
+    --endpoint <URL>            eCash Esplora base URL (default: the ECX betanet preset)
     --bitcoin <URL>             Bitcoin Esplora for `check` (default: blockstream.info)
     --accounts <N>              Account indices to probe per address type (default: 3).
                                 Raise this if an account was created further out; four
@@ -324,6 +324,7 @@ async fn run(command: &str, args: &[String]) -> Result<(), String> {
             let (tip, readiness) = ecx_split::chain_status(&chain)
                 .await
                 .map_err(|e| e.to_string())?;
+            println!("network  : {}", ecx_core::NETWORK.name);
             println!("endpoint : {}", profile.esplora_url);
             println!("tip      : {} (unix {})", tip.height, tip.time);
             match readiness {
@@ -345,17 +346,30 @@ async fn run(command: &str, args: &[String]) -> Result<(), String> {
                 }
             );
 
+            // Parity with the GUI footer. A user who splits on a pre-launch net and thinks they
+            // are done has been actively misled (`CLAUDE.md` §3), and a CLI that stays silent
+            // about it is the easiest place to form that belief.
+            if ecx_core::NETWORK.coins_are_durable {
+                println!("coins    : durable");
+            } else {
+                println!(
+                    "coins    : NOT DURABLE — {} coins are destroyed and re-issued at the real fork",
+                    ecx_core::NETWORK.name
+                );
+                println!("           splitting here is a rehearsal, not a claim");
+            }
+
             // The fork probe, read-only. Says whether this endpoint is provably eCash before a
             // user tries to publish to it and finds out the hard way.
             match ecx_split::broadcast_readiness(&chain).await {
                 Ok(readiness) => match readiness.explain() {
-                    None => println!("broadcast : allowed — endpoint proven to be eCash"),
+                    None => println!("broadcast: allowed — endpoint proven to be eCash"),
                     Some(why) => {
-                        println!("broadcast : REFUSED");
+                        println!("broadcast: REFUSED");
                         println!("            {why}");
                     }
                 },
-                Err(e) => println!("broadcast : could not check — {e}"),
+                Err(e) => println!("broadcast: could not check — {e}"),
             }
             Ok(())
         }

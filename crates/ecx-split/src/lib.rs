@@ -109,7 +109,9 @@ pub enum SplitError {
 }
 
 /// Post-fork difficulty resets to minimum, so reorg risk is elevated and six confirmations is
-/// not enough. **CONFIRM against observed alpha block times before release.**
+/// not enough. **CONFIRM against observed betanet block times before release** — betanet was
+/// mining well ahead of Bitcoin on 2026-09-21 (tip 969,951 against Bitcoin's 968,014), which is
+/// the reset showing through and is exactly why this is not 6.
 pub const MIN_CONFIRMATIONS: u32 = 30;
 
 /// Read the device's identity.
