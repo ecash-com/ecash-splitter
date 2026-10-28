@@ -18,7 +18,7 @@ use ecx_core::{ECX_MAGIC_LOCKTIME, EcxPsbt, InvariantError};
 use crate::discovery::{PARALLEL_REQUESTS, guard_synced};
 use crate::{DiscoveredAccount, STOP_GAP};
 
-/// ECX will have a near-empty mempool and reset difficulty, so `estimatefee` is absent or noise
+/// ECX will have a near-empty mempool and sharply reduced difficulty, so `estimatefee` is absent or noise
 /// (`CLAUDE.md` §6). Static floor, deliberately.
 pub const DEFAULT_FEERATE_SAT_PER_VB: u64 = 1;
 

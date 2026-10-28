@@ -880,8 +880,8 @@ fn account_row(
 // ---------------------------------------------------------------------------
 
 pub fn footer(app: &SplitterApp, cx: &App) -> AnyElement {
-    // Which chain this build targets is a constant, never derived from the tip — betanet's tip
-    // crosses the old "full launch" height within days and must not stop warning (`Network`).
+    // Which chain this build targets is a constant, never derived from the tip (`Network`).
+    // Durable on mainnet, so the warning does not render; it would on a pre-launch net.
     let durable = NETWORK.coins_are_durable;
 
     div()
@@ -910,7 +910,10 @@ pub fn footer(app: &SplitterApp, cx: &App) -> AnyElement {
                 .children((!durable).then(|| {
                     div()
                         .text_color(cx.theme().warning)
-                        .child("betanet coins are destroyed and re-issued at the real fork")
+                        .child(SharedString::from(format!(
+                            "{} coins are destroyed and re-issued at the real fork",
+                            NETWORK.name
+                        )))
                         .into_any_element()
                 })),
         )
@@ -1625,7 +1628,7 @@ fn broadcast_card(
                         cx.theme().warning,
                         "Not settled yet",
                         SharedString::from(format!(
-                            "Wait for {required} confirmations. Post-fork difficulty resets to minimum, so early blocks come erratically and reorg risk is higher than on a mature chain."
+                            "Wait for {required} confirmations. Post-fork difficulty is a small fraction of Bitcoin's, so early blocks come erratically and reorg risk is higher than on a mature chain."
                         )),
                     )
                 }))

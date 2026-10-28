@@ -17,11 +17,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use bitcoin::{Amount, OutPoint, Psbt, Sequence, Transaction, TxOut, absolute::LockTime};
 
 // ---------------------------------------------------------------------------
-// Consensus facts. Verified against ecash-com/bitcoin @ betanet on 2026-09-21.
+// Consensus facts. Verified against ecash-com/bitcoin @ mainnet-bridge on 2026-10-28.
 // ---------------------------------------------------------------------------
 
 /// The launch this build targets. **Changing this is the fork migration** — see [`Network`].
-pub const NETWORK: Network = BETANET;
+pub const NETWORK: Network = MAINNET;
 
 /// `consensus.EcashHeight` — `src/kernel/chainparams.cpp:82`. `2016 * 480`, a retarget boundary.
 ///
@@ -29,59 +29,56 @@ pub const NETWORK: Network = BETANET;
 pub const ECASH_HEIGHT: u32 = NETWORK.fork_height;
 
 /// The magic `nLockTime` that makes a transaction final on ECX and permanently non-final on
-/// Bitcoin. `LOCKTIME_THRESHOLD - 1`; see `IsFinalTx`, `src/consensus/tx_verify.cpp:19`.
-pub const ECX_MAGIC_LOCKTIME: u32 = 499_999_999;
+/// Bitcoin. `LOCKTIME_THRESHOLD - 2` on mainnet; see `IsFinalTx`, `src/consensus/tx_verify.cpp:19`.
+///
+/// Read from [`NETWORK`] rather than written here, because it is a per-chain fact: the pre-launch
+/// nets used `LOCKTIME_THRESHOLD - 1`, and a transaction carrying that value is an ordinary
+/// far-future locktime on mainnet — non-final there, non-final on Bitcoin, mined nowhere.
+pub const ECX_MAGIC_LOCKTIME: u32 = NETWORK.magic_locktime;
 
 /// Sequence stamped on every input. Anything is fine except [`Sequence::MAX`], which would make
 /// `IsFinalTx` ignore the locktime entirely — and the transaction would replay onto Bitcoin.
 pub const ECX_SEQUENCE: Sequence = Sequence(0xFFFF_FFFD);
 
-/// One eCash launch.
+/// The chain this build targets.
 ///
-/// **Each launch is a separate chain, not a later phase of one chain.** Alphanet forked Bitcoin
-/// at 963,648 with network magic `eca5a104`; betanet forks at 967,680 with `eca5b104`; the real
-/// eCash fork will have its own height and magic again. Each shares Bitcoin's history below its
-/// own fork height and nothing above it, and none of them is a continuation of another.
-///
-/// This used to be a `Phase` enum derived from the chain tip — `at_height(h)` returning
-/// `Alpha`/`Beta`/`Full` as `h` crossed 963,648 / 967,680 / 973,728. That was wrong, and wrong in
-/// the direction that costs money: those are three *different chains'* fork heights, not
-/// milestones on one. Betanet's tip was already 969,951 on 2026-09-21 and climbing fast at reset
-/// difficulty, so it will cross 973,728 — "full launch" — within days, at which point a
-/// height-derived phase would have told a betanet user their throwaway coins were durable.
-///
-/// Which chain you are on is a build-time fact, so it is a constant here and never inferred from
-/// a height.
+/// Every eCash launch — the pre-launch nets and mainnet alike — is a separate chain forking
+/// Bitcoin at its own height with its own magic, sharing Bitcoin's history below that height and
+/// nothing above it. Which one a build targets is a build-time fact, so it is a constant here and
+/// never inferred from a chain tip: a tip-derived "phase" once announced durable coins on a
+/// throwaway chain because that chain happened to mine past mainnet's fork height first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Network {
-    /// Display name, e.g. `"betanet"`.
+    /// Display name, e.g. `"mainnet"`.
     pub name: &'static str,
     /// `consensus.EcashHeight` — the block at which this chain diverges from Bitcoin.
     pub fork_height: u32,
     /// `pchMessageStart`. Not used for P2P (we speak to an indexer, not the network); it is the
     /// chain's identity and the quickest way to tell two launches apart in a bug report.
     pub magic: [u8; 4],
-    /// Whether coins on this chain survive. **False for every pre-launch net**: alpha and beta
-    /// coins are destroyed and re-issued at the real fork, so a user who splits on betanet and
-    /// thinks they are done has been actively misled (`CLAUDE.md` §3).
+    /// The `nLockTime` this chain's `IsFinalTx` short-circuits on. Re-read it off the launch
+    /// branch for every chain: it has already changed once.
+    pub magic_locktime: u32,
+    /// Whether coins on this chain survive. True on mainnet; false on any pre-launch net, whose
+    /// coins are destroyed and re-issued at the real fork (`CLAUDE.md` §3).
     pub coins_are_durable: bool,
 }
 
-/// Betanet. `ecash-com/bitcoin` @ `betanet` / `betanet-bridge`, read 2026-09-21:
-/// `consensus.EcashHeight = 967680` (`src/kernel/chainparams.cpp:82`, `2016 * 480`),
-/// `pchMessageStart = eca5b104`, seeds `seed.beta.ecash.ninja` and friends on port 8533.
-pub const BETANET: Network = Network {
-    name: "betanet",
-    fork_height: 967_680,
-    magic: [0xec, 0xa5, 0xb1, 0x04],
-    // Betanet coins are destroyed and re-issued at the real fork. Never durable.
-    coins_are_durable: false,
+/// eCash mainnet. `ecash-com/bitcoin` @ `mainnet-bridge`, read 2026-10-28:
+/// `consensus.EcashHeight = 973728` (`src/kernel/chainparams.cpp:82`, `2016 * 483`),
+/// `pchMessageStart = eca5dcb7`, seeds `seed.ecash.ninja` and friends on port 8533, and
+/// `IsFinalTx` short-circuits on `LOCKTIME_THRESHOLD - 2` (`src/consensus/tx_verify.cpp:19`).
+///
+/// Difficulty does not reset to the proof-of-work floor at the fork block; it is set to
+/// `EcashForkBits = 0x1901a6e1` (about 2.6e9, against Bitcoin's ~140e12 at the time —
+/// `src/pow.cpp:81-83`). Still far enough below Bitcoin's that early reorg risk is elevated.
+pub const MAINNET: Network = Network {
+    name: "mainnet",
+    fork_height: 973_728,
+    magic: [0xec, 0xa5, 0xdc, 0xb7],
+    magic_locktime: 499_999_998,
+    coins_are_durable: true,
 };
-
-// The real eCash fork gets its own `Network` const here, and [`NETWORK`] is repointed at it.
-// Do not guess its height or magic in advance — read them off the launch branch, and update
-// `ecx_chain::BITCOIN_HASH_AT_FORK` in the same change or the fork probe compares against the
-// wrong block.
 
 // ---------------------------------------------------------------------------
 // Errors

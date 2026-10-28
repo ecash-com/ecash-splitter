@@ -116,21 +116,23 @@ impl ForkProbe {
 /// block exists, without waiting for a release.
 pub const ENV_BITCOIN_FORK_HASH: &str = "ECX_BITCOIN_FORK_HASH";
 
-/// Bitcoin mainnet's block hash at [`ECASH_HEIGHT`] — betanet's fork height, 967,680.
+/// Bitcoin mainnet's block hash at [`ECASH_HEIGHT`] — the eCash fork height, 973,728.
 ///
-/// Read 2026-09-21 from blockstream.info and mempool.space independently, both agreeing, with
-/// Bitcoin's tip at 968,014 — past the fork height, so this block is final.
+/// **`None` because the block does not exist yet.** On 2026-10-28 Bitcoin's tip was 973,577,
+/// 151 blocks short of the fork, which is also its next retarget. Until that block is mined and
+/// buried, there is nothing to compile in, and the probe reports
+/// [`ForkProbe::NoBitcoinReference`] for every endpoint — so this build cannot broadcast at all
+/// unless [`ENV_BITCOIN_FORK_HASH`] is set.
 ///
-/// For comparison, ECX betanet's block at the same height is
-/// `00000000000000030101ba5cfea54b22becc79f95dc6040beb76e01dd9d04042` — note the shorter run of
-/// leading zeros, which is the difficulty reset at the fork showing through. Betanet's block at
-/// 967,679, the last block the two chains share, is identical on both.
+/// **Once the block exists:** read its hash from two independent Bitcoin sources
+/// (blockstream.info and mempool.space, say), wait for it to be buried a few blocks deep, and
+/// put it here, and add eCash's own hash at that height to
+/// `the_compiled_in_reference_is_bitcoins_not_ecashs` below. Users who cannot wait for that
+/// release set the environment variable to the same value.
 ///
-/// **Update this with every fork.** Each launch forks at its own height, and a stale value here
-/// means the probe compares against the wrong block — which is how a Bitcoin endpoint gets
-/// cleared for broadcast.
-pub const BITCOIN_HASH_AT_FORK: Option<&str> =
-    Some("0000000000000000000161354016172f2a377610d52dd46d0f68a919333458cd");
+/// **Never a guess and never a stale value.** The probe compares against exactly this block; the
+/// wrong one is how a Bitcoin endpoint gets cleared for broadcast.
+pub const BITCOIN_HASH_AT_FORK: Option<&str> = None;
 
 /// Bitcoin's hash at the fork height: from the environment if set, otherwise compiled in.
 ///
@@ -193,7 +195,8 @@ impl TxState {
         }
     }
 
-    /// Post-fork difficulty resets to minimum, so reorg risk is elevated and six is not enough.
+    /// Post-fork difficulty is a small fraction of Bitcoin's, so reorg risk is elevated and six
+    /// is not enough.
     pub fn is_deep_enough(&self, required: u32) -> bool {
         self.confirmations() >= required
     }
@@ -236,8 +239,9 @@ impl ScanReadiness {
     /// `now_unix` is threaded in rather than read from the clock so this stays testable.
     ///
     /// Known limitation: an indexer stalled *above* the fork height still reads as ready. Post-
-    /// fork difficulty resets to minimum, so ECX block intervals will be erratic and a pure
-    /// freshness test would produce constant false alarms. Revisit once real block times exist.
+    /// fork difficulty drops far below Bitcoin's, so ECX block intervals will be erratic and a
+    /// pure freshness test would produce constant false alarms. Revisit once real block times
+    /// exist.
     pub fn assess(tip: TipInfo, now_unix: u64) -> Self {
         if tip.height >= ecx_core::ECASH_HEIGHT {
             return ScanReadiness::Ready { tip: tip.height };
@@ -431,26 +435,39 @@ mod tests {
     }
 
     #[test]
-    fn the_compiled_in_reference_parses_and_is_bitcoins_not_ecashs() {
-        let hash = bitcoin_hash_at_fork().expect("a reference is compiled in");
-        // Guards a paste error: ECX betanet's block at the same height, which would make the
-        // probe clear Bitcoin and reject eCash — exactly backwards.
-        assert_ne!(
-            hash.to_string(),
-            "00000000000000030101ba5cfea54b22becc79f95dc6040beb76e01dd9d04042",
-            "that is ECX betanet's hash at the fork height, not Bitcoin's"
-        );
-        // Guards the other paste error: the reference for alphanet's fork height, 963,648.
-        // Stale here means the probe compares betanet against the wrong block entirely.
-        assert_ne!(
-            hash.to_string(),
+    fn the_compiled_in_reference_is_bitcoins_not_ecashs() {
+        // Until Bitcoin mines block 973,728 there is nothing to compile in, and the only
+        // acceptable value is `None`: a guessed or stale hash would clear the wrong chain.
+        let Some(text) = BITCOIN_HASH_AT_FORK else {
+            return;
+        };
+        let hash: BlockHash = text.parse().expect("the compiled-in reference parses");
+        // Guards the stale-value paste error: Bitcoin's hashes at the pre-launch nets' fork
+        // heights (967,680 and 963,648), which this constant held before. Stale here means the
+        // probe compares mainnet against the wrong block entirely.
+        for stale in [
+            "0000000000000000000161354016172f2a377610d52dd46d0f68a919333458cd",
             "00000000000000000001769d9a327f5b455aa8a2dd407b1b63040d2a9f832d32",
-            "that is Bitcoin's hash at alphanet's fork height, not betanet's"
-        );
-        assert_eq!(
-            hash.to_string(),
-            "0000000000000000000161354016172f2a377610d52dd46d0f68a919333458cd"
-        );
+        ] {
+            assert_ne!(
+                hash.to_string(),
+                stale,
+                "that is Bitcoin's hash at a pre-launch fork height, not at 973,728"
+            );
+        }
+        // Guards the other paste error: eCash's own block at the fork height, which would make
+        // the probe clear Bitcoin and reject eCash — exactly backwards. Add it here once known.
+    }
+
+    /// With no reference compiled in, the shipped probe refuses every endpoint rather than
+    /// guessing. This is the state this build was released in, so pin it: the moment a hash is
+    /// compiled in, this test must be deleted and the one above fully armed.
+    #[test]
+    fn without_a_reference_no_endpoint_may_be_broadcast_to() {
+        if BITCOIN_HASH_AT_FORK.is_some() || std::env::var(ENV_BITCOIN_FORK_HASH).is_ok() {
+            return;
+        }
+        assert!(bitcoin_hash_at_fork().is_none());
     }
 
     #[test]

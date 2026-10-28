@@ -315,18 +315,28 @@ fn broadcast_refuses_a_transaction_that_lost_its_replay_protection() {
 }
 
 #[test]
-fn the_build_targets_betanet() {
-    // Pins the consensus facts read off ecash-com/bitcoin @ betanet on 2026-09-21. If a
+fn the_build_targets_mainnet() {
+    // Pins the consensus facts read off ecash-com/bitcoin @ mainnet-bridge on 2026-10-28. If a
     // dependency bump or a bad merge moves any of these, the fork probe silently compares
     // against the wrong block — so fail here instead.
-    assert_eq!(NETWORK, BETANET);
-    assert_eq!(NETWORK.name, "betanet");
-    assert_eq!(ECASH_HEIGHT, 967_680);
-    assert_eq!(NETWORK.magic, [0xec, 0xa5, 0xb1, 0x04]);
+    assert_eq!(NETWORK, MAINNET);
+    assert_eq!(NETWORK.name, "mainnet");
+    assert_eq!(ECASH_HEIGHT, 973_728);
+    assert_eq!(NETWORK.magic, [0xec, 0xa5, 0xdc, 0xb7]);
     // A retarget boundary, as every launch height has been.
     assert_eq!(ECASH_HEIGHT % 2016, 0);
-    // Not alphanet's height, which is the paste error this guards against.
+    // Not a pre-launch net's height (963,648 / 967,680), the paste error this guards against.
     assert_ne!(ECASH_HEIGHT, 963_648);
+    assert_ne!(ECASH_HEIGHT, 967_680);
+}
+
+#[test]
+fn the_magic_locktime_is_threshold_minus_two() {
+    // mainnet-bridge's IsFinalTx short-circuits on LOCKTIME_THRESHOLD - 2. The pre-launch nets
+    // used - 1, and that value on mainnet is an ordinary far-future height: non-final there,
+    // non-final on Bitcoin, never mined anywhere.
+    assert_eq!(ECX_MAGIC_LOCKTIME, 499_999_998);
+    assert_ne!(ECX_MAGIC_LOCKTIME, 499_999_999);
 }
 
 /// Read the flag through a function boundary.
@@ -339,22 +349,21 @@ fn coins_are_durable(network: Network) -> bool {
 }
 
 #[test]
-fn betanet_coins_are_never_durable() {
-    // Beta coins are destroyed and re-issued at the real fork, so the UI must keep warning.
+fn mainnet_coins_are_durable() {
+    // Mainnet is the real fork, so the pre-launch "rehearsal" warning must be gone.
     assert!(
-        !coins_are_durable(NETWORK),
-        "{} is a pre-launch chain; its coins do not survive the real fork",
+        coins_are_durable(NETWORK),
+        "{} is the real fork; its coins are durable value",
         NETWORK.name
     );
-    assert!(!coins_are_durable(BETANET));
 }
 
 #[test]
 fn durability_does_not_depend_on_the_chain_tip() {
-    // Regression guard for the bug this replaced. Betanet's tip crosses 973,728 — what the old
-    // height-derived `Phase` called "full launch" — within days of 2026-09-21 at reset
-    // difficulty. Durability is a property of *which chain this build targets*, so no height,
-    // least of all that one, may flip it.
+    // Regression guard for the bug this replaced: a height-derived `Phase` that flipped to
+    // "full launch" once any chain's tip crossed 973,728 — which a throwaway pre-launch chain
+    // did first. Durability is a property of *which chain this build targets*, so no height may
+    // flip it in either direction.
     //
     // Phrased as a function of the tip because that is the shape of the bug: anything that reads
     // a height and returns a durability must return the same answer for every height.
@@ -373,6 +382,6 @@ fn durability_does_not_depend_on_the_chain_tip() {
 #[test]
 fn magic_locktime_is_below_the_threshold() {
     // Must be interpreted as a block height, not a timestamp, on both chains.
-    assert_eq!(ECX_MAGIC_LOCKTIME, 500_000_000 - 1);
+    assert_eq!(ECX_MAGIC_LOCKTIME, 500_000_000 - 2);
     assert!(LockTime::from_consensus(ECX_MAGIC_LOCKTIME).is_block_height());
 }

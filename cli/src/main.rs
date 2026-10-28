@@ -34,7 +34,7 @@ COMMANDS:
     track --txid <TXID>         How deeply buried a broadcast transaction is
 
 OPTIONS:
-    --endpoint <URL>            eCash Esplora base URL (default: the ECX betanet preset)
+    --endpoint <URL>            eCash Esplora base URL (default: the ECX mainnet preset)
     --bitcoin <URL>             Bitcoin Esplora for `check` (default: blockstream.info)
     --accounts <N>              Account indices to probe per address type (default: 3).
                                 Raise this if an account was created further out; four
@@ -287,8 +287,8 @@ async fn publish(
     println!("explorer    : {}", profile.tx_url(&txid.to_string()));
     println!();
     println!(
-        "Wait for {} confirmations before treating this as settled — post-fork difficulty resets\n\
-         to minimum, so early reorg risk is elevated. Track it with:\n  ecx track --txid {txid}",
+        "Wait for {} confirmations before treating this as settled — post-fork difficulty is a\n\
+         small fraction of Bitcoin's, so early reorg risk is elevated. Track it with:\n  ecx track --txid {txid}",
         ecx_split::MIN_CONFIRMATIONS
     );
     Ok(())
@@ -651,9 +651,9 @@ async fn run(command: &str, args: &[String]) -> Result<(), String> {
                 } => {
                     println!("confirmed in block {height}, {confirmations} confirmation(s)");
                     if confirmations < ecx_split::MIN_CONFIRMATIONS {
-                        // Post-fork difficulty resets to minimum, so reorg risk is elevated.
+                        // Post-fork difficulty is a small fraction of Bitcoin's, so reorg risk is elevated.
                         println!(
-                            "  wait for {} — post-fork difficulty is at minimum, so early reorg risk is elevated",
+                            "  wait for {} — post-fork difficulty is far below Bitcoin's, so early reorg risk is elevated",
                             ecx_split::MIN_CONFIRMATIONS
                         );
                     }

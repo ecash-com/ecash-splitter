@@ -125,7 +125,7 @@ mod tests {
         };
         let unsigned = Transaction {
             version: Version::TWO,
-            lock_time: LockTime::from_consensus(499_999_999),
+            lock_time: LockTime::from_consensus(ecx_core::ECX_MAGIC_LOCKTIME),
             input: vec![TxIn {
                 previous_output: OutPoint {
                     txid: prev.compute_txid(),

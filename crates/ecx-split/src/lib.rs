@@ -108,10 +108,11 @@ pub enum SplitError {
     NotBroadcastable(Box<ForkProbe>),
 }
 
-/// Post-fork difficulty resets to minimum, so reorg risk is elevated and six confirmations is
-/// not enough. **CONFIRM against observed betanet block times before release** — betanet was
-/// mining well ahead of Bitcoin on 2026-09-21 (tip 969,951 against Bitcoin's 968,014), which is
-/// the reset showing through and is exactly why this is not 6.
+/// Post-fork difficulty is a small fraction of Bitcoin's — `EcashForkBits` sets it to about
+/// 2.6e9 at the fork block, tens of thousands of times below Bitcoin's — so reorg risk is
+/// elevated and six confirmations is not enough. **CONFIRM against observed block times once the
+/// fork has happened**; the pre-launch nets mined well ahead of Bitcoin after their resets, which
+/// is exactly why this is not 6.
 pub const MIN_CONFIRMATIONS: u32 = 30;
 
 /// Read the device's identity.
@@ -553,7 +554,7 @@ mod tests {
         // Trezor's shape: already finished, nothing to finalize.
         let tx = Transaction {
             version: bitcoin::transaction::Version::TWO,
-            lock_time: bitcoin::absolute::LockTime::from_consensus(499_999_999),
+            lock_time: bitcoin::absolute::LockTime::from_consensus(ecx_core::ECX_MAGIC_LOCKTIME),
             input: vec![],
             output: vec![],
         };
@@ -568,7 +569,7 @@ mod tests {
         // already told the user it was signed.
         let unsigned = Transaction {
             version: bitcoin::transaction::Version::TWO,
-            lock_time: bitcoin::absolute::LockTime::from_consensus(499_999_999),
+            lock_time: bitcoin::absolute::LockTime::from_consensus(ecx_core::ECX_MAGIC_LOCKTIME),
             input: vec![bitcoin::TxIn {
                 previous_output: bitcoin::OutPoint::null(),
                 script_sig: bitcoin::ScriptBuf::new(),

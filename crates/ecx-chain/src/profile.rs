@@ -2,14 +2,14 @@
 //!
 //! # Changing endpoints between forks
 //!
-//! These hosts move every fork — drynet → alpha → beta → mainnet — so they are deliberately easy
-//! to change in three ways, in increasing order of permanence:
+//! These hosts can move, so they are deliberately easy to change in three ways, in increasing
+//! order of permanence:
 //!
 //! 1. **At runtime.** The GUI has an editable endpoint field; the CLI takes `--endpoint`.
 //! 2. **By environment**, without touching the binary or the UI:
 //!    ```sh
-//!    ECX_ESPLORA_URL=https://esplora.beta.ecash.ninja \
-//!    ECX_EXPLORER_URL=https://explorer.beta.ecash.ninja \
+//!    ECX_ESPLORA_URL=https://esplora.ecash.ninja \
+//!    ECX_EXPLORER_URL=https://explorer.ecash.ninja \
 //!    cargo run -p ecash-splitter
 //!    ```
 //! 3. **In code**, by editing [`PRESETS`] below. That is the only place a hostname is written.
@@ -32,25 +32,26 @@ pub const ENV_EXPLORER_URL: &str = "ECX_EXPLORER_URL";
 /// `esplora_url` is the API base; `explorer_url` is the human-facing site a transaction link
 /// points at. They are usually the same host, but need not be.
 ///
-/// **Betanet.** Both entries were verified on 2026-09-21 against the endpoints `bdk_esplora`
-/// actually scans with — `/scripthash/{hash}/txs` returning `200 []`, not merely
-/// `/blocks/tip/height` — which is the check `esplora.alpha.ecash.ninja` and mempool.space both
-/// failed. Both reported tip 969,951 and agreed on the fork block at 967,680.
+/// **Mainnet.** From <https://drivechain.dev/config> (`id: ecash`), and both entries verified on
+/// 2026-10-28 against the endpoints `bdk_esplora` actually scans with — `/scripthash/{hash}/txs`
+/// returning `200 []`, not merely `/blocks/tip/height`, which mempool.space and some earlier
+/// hosts pass while failing the scan. Both reported tip 973,577, level with Bitcoin, because the
+/// fork block had not been mined yet; both serve `/fee-estimates` (empty, as expected on a chain
+/// with no mempool history).
 ///
-/// Note the first entry's API base has **no `/api` suffix**: `esplora.beta.ecash.ninja` serves
-/// Esplora at the root. It is listed first because it also serves `/fee-estimates`, which
-/// `explorer.beta.ecash.ninja` answers with a 404.
+/// Note the first entry's API base has **no `/api` suffix**: `esplora.ecash.ninja` serves
+/// Esplora at the root.
 pub const PRESETS: &[(&str, &str, &str)] = &[
     // (display name, esplora API base, explorer site)
     (
-        "ECX betanet",
-        "https://esplora.beta.ecash.ninja",
-        "https://explorer.beta.ecash.ninja",
+        "ECX mainnet",
+        "https://esplora.ecash.ninja",
+        "https://explorer.ecash.ninja",
     ),
     (
-        "ECX betanet (explorer)",
-        "https://explorer.beta.ecash.ninja/api",
-        "https://explorer.beta.ecash.ninja",
+        "ECX mainnet (explorer)",
+        "https://explorer.ecash.ninja/api",
+        "https://explorer.ecash.ninja",
     ),
 ];
 
@@ -82,16 +83,16 @@ pub enum ProfileKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChainProfile {
     pub name: Cow<'static, str>,
-    /// Esplora API base, e.g. `https://esplora.beta.ecash.ninja`.
+    /// Esplora API base, e.g. `https://esplora.ecash.ninja`.
     pub esplora_url: Cow<'static, str>,
-    /// Human-facing explorer, e.g. `https://explorer.beta.ecash.ninja`.
+    /// Human-facing explorer, e.g. `https://explorer.ecash.ninja`.
     pub explorer_url: Cow<'static, str>,
     pub kind: ProfileKind,
 }
 
 impl ChainProfile {
     /// The first preset, with [`ENV_ESPLORA_URL`] / [`ENV_EXPLORER_URL`] applied if set.
-    pub fn ecx_betanet() -> Self {
+    pub fn ecx_mainnet() -> Self {
         let (name, esplora, explorer) = PRESETS[0];
         let mut profile = Self {
             name: Cow::Borrowed(name),
@@ -140,7 +141,7 @@ impl ChainProfile {
     /// Built-in endpoints offered in the UI, with environment overrides applied.
     pub fn presets() -> Vec<Self> {
         if std::env::var(ENV_ESPLORA_URL).is_ok_and(|v| !v.trim().is_empty()) {
-            return vec![Self::ecx_betanet()];
+            return vec![Self::ecx_mainnet()];
         }
         PRESETS
             .iter()
@@ -190,7 +191,7 @@ impl ChainProfile {
 
 impl Default for ChainProfile {
     fn default() -> Self {
-        Self::ecx_betanet()
+        Self::ecx_mainnet()
     }
 }
 
@@ -201,8 +202,8 @@ impl Default for ChainProfile {
 /// appending there produces exactly the 404 this is meant to prevent:
 ///
 /// ```text
-/// https://esplora.beta.ecash.ninja/blocks/tip/height      -> 200 969951
-/// https://esplora.beta.ecash.ninja/api/blocks/tip/height  -> 404 endpoint does not exist
+/// https://esplora.ecash.ninja/blocks/tip/height      -> 200 973577
+/// https://esplora.ecash.ninja/api/blocks/tip/height  -> 404 endpoint does not exist
 /// ```
 ///
 /// The two are told apart by the leftmost host label, which is the naming convention across every
@@ -262,15 +263,15 @@ mod tests {
 
     #[test]
     fn an_esplora_host_keeps_its_root_api_base() {
-        // esplora.beta.ecash.ninja serves Esplora at the root; appending /api 404s every call.
+        // esplora.ecash.ninja serves Esplora at the root; appending /api 404s every call.
         for input in [
-            "https://esplora.beta.ecash.ninja",
-            "https://esplora.beta.ecash.ninja/",
-            "  https://esplora.beta.ecash.ninja  ",
+            "https://esplora.ecash.ninja",
+            "https://esplora.ecash.ninja/",
+            "  https://esplora.ecash.ninja  ",
         ] {
             assert_eq!(
                 ChainProfile::custom(input).esplora_url,
-                "https://esplora.beta.ecash.ninja",
+                "https://esplora.ecash.ninja",
                 "input was {input:?}"
             );
         }
@@ -281,26 +282,23 @@ mod tests {
         );
         // An explorer.* host still gets /api appended.
         assert_eq!(
-            ChainProfile::custom("https://explorer.beta.ecash.ninja").esplora_url,
-            "https://explorer.beta.ecash.ninja/api"
+            ChainProfile::custom("https://explorer.ecash.ninja").esplora_url,
+            "https://explorer.ecash.ninja/api"
         );
     }
 
     #[test]
     fn the_explorer_is_the_api_base_without_api() {
-        let p = ChainProfile::custom("https://explorer.beta.ecash.ninja/api");
-        assert_eq!(p.explorer_url, "https://explorer.beta.ecash.ninja");
-        assert_eq!(
-            p.tx_url("abc123"),
-            "https://explorer.beta.ecash.ninja/tx/abc123"
-        );
+        let p = ChainProfile::custom("https://explorer.ecash.ninja/api");
+        assert_eq!(p.explorer_url, "https://explorer.ecash.ninja");
+        assert_eq!(p.tx_url("abc123"), "https://explorer.ecash.ninja/tx/abc123");
     }
 
     #[test]
     fn every_preset_is_well_formed() {
         // Guards a fork migration that updates one URL and forgets the other. The api base and
-        // the explorer are deliberately allowed to be different hosts — esplora.beta serves the
-        // API at its root while explorer.beta hosts the human-facing site — so this checks shape
+        // the explorer are deliberately allowed to be different hosts — esplora.* serves the
+        // API at its root while explorer.* hosts the human-facing site — so this checks shape
         // rather than asserting one is derived from the other.
         assert!(!PRESETS.is_empty());
         for &(name, esplora, explorer) in PRESETS {
@@ -323,12 +321,22 @@ mod tests {
     fn the_presets_target_the_configured_fork() {
         // A stale endpoint is the other half of a half-done migration: the fork probe would be
         // comparing the right block against the wrong chain's indexer.
-        assert_eq!(ecx_core::ECASH_HEIGHT, 967_680);
+        assert_eq!(ecx_core::ECASH_HEIGHT, 973_728);
         for &(_, esplora, explorer) in PRESETS {
+            let host = host_of(esplora);
             for url in [esplora, explorer] {
-                assert!(url.contains(".beta."), "{url} is not a betanet endpoint");
-                assert!(!url.contains(".alpha."), "{url} is still alphanet");
+                assert!(
+                    host_of(url).ends_with(".ecash.ninja"),
+                    "{url} is not an eCash endpoint"
+                );
             }
+            // Mainnet hosts are the bare `*.ecash.ninja` names: exactly one label before the
+            // domain, so a pre-launch subdomain (`*.beta.ecash.ninja`) cannot slip through.
+            assert_eq!(
+                host.matches('.').count(),
+                2,
+                "{host} has a pre-launch subdomain"
+            );
         }
     }
 

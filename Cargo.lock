@@ -1720,7 +1720,7 @@ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
 name = "ecash-splitter"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bitcoin",
  "ecx-chain",
@@ -1736,7 +1736,7 @@ dependencies = [
 
 [[package]]
 name = "ecash-splitter-cli"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bitcoin",
  "ecx-chain",
@@ -1763,7 +1763,7 @@ dependencies = [
 
 [[package]]
 name = "ecx-chain"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "bitcoin",
@@ -1777,7 +1777,7 @@ dependencies = [
 
 [[package]]
 name = "ecx-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bitcoin",
  "thiserror 2.0.20",
@@ -1785,7 +1785,7 @@ dependencies = [
 
 [[package]]
 name = "ecx-signer"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "async-hwi",
  "async-trait",
@@ -1799,7 +1799,7 @@ dependencies = [
 
 [[package]]
 name = "ecx-split"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bitcoin",
  "ecx-chain",
@@ -1812,7 +1812,7 @@ dependencies = [
 
 [[package]]
 name = "ecx-wallet"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bdk_esplora",
  "bdk_wallet",

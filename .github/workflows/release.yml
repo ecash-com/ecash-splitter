@@ -242,8 +242,14 @@ jobs:
             echo
             echo "## Notes"
             echo
-            echo "- **Betanet only.** Betanet coins are destroyed and re-issued at the real"
-            echo "  eCash fork, so nothing split now is durable value — this is a rehearsal."
+            echo "- **eCash mainnet.** Fork at Bitcoin block 973,728, replay-protection locktime"
+            echo "  499999998, endpoints esplora.ecash.ninja / explorer.ecash.ninja."
+            echo "- **Broadcast is disabled until the fork block exists.** This build carries no"
+            echo "  Bitcoin reference hash for block 973,728 because it had not been mined. Once it"
+            echo "  is a few blocks deep, set \`ECX_BITCOIN_FORK_HASH\` to Bitcoin's hash at that"
+            echo "  height (from blockstream.info or mempool.space, never from an eCash endpoint),"
+            echo "  or install the follow-up release that compiles it in. Everything up to and"
+            echo "  including signing works now."
             echo "- Binaries are **unsigned**. See the README for how to allow them to run on"
             echo "  macOS and Windows — the steps differ by OS version."
             echo "- The GUI and CLI ship separately. \`ecx\` has no GPUI dependency and runs headless."
@@ -251,7 +257,8 @@ jobs:
               echo "- ⚠️ Some GUI targets failed to build; only the artifacts listed below are available."
             fi
           } > "$notes"
-          # Pre-release, deliberately: betanet coins do not survive the real fork, and the
-          # binaries are unsigned. Drop the flag when that stops being true.
+          # Pre-release, deliberately: the binaries are unsigned, and this build cannot
+          # broadcast until the fork block exists and a reference hash is supplied. Drop the
+          # flag when both stop being true.
           gh release create "$GITHUB_REF_NAME" dist/* \
             --title "$GITHUB_REF_NAME" --notes-file "$notes" --verify-tag --prerelease

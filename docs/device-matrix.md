@@ -16,7 +16,7 @@ build a sweep through `finalize_ecx_psbt` and record:
 |---|---|---|
 | 1 | Device enumerates and reports the expected **master fingerprint** | Descriptor↔device mismatch must be a hard error (§5.4) |
 | 2 | Account xpub reads at `m/84'/0'/0'` | Coin type is `0'`; the real BTC account is where the coins are |
-| 3 | Device **accepts `nLockTime = 499999999`** and signs | If a device refuses, that device cannot split. This is the load-bearing check |
+| 3 | Device **accepts `nLockTime = 499999998`** and signs | If a device refuses, that device cannot split. This is the load-bearing check. Earlier rows were recorded with 499999999, the pre-launch value; mainnet is one lower and should behave identically, but re-confirm |
 | 4 | What the device **displays** about the locktime | Trezor is expected to show a locktime/blockheight warning — the only on-device ECX marker we get (§5, Golden Rule 5) |
 | 5 | Signs with **all inputs at `nSequence = 0xFFFFFFFD`** | Sequence `0xFFFFFFFF` makes locktime ignored → **replays onto Bitcoin** (§8.2) |
 | 6 | Requires `non_witness_utxo` on segwit inputs? | Trezor ≥1.9.0/2.3.0 does; drives the "never `only_witness_utxo()`" rule (§5.4) |
